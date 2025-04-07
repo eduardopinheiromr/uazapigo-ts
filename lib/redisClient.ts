@@ -1,17 +1,21 @@
 // lib/redisClient.ts
 
-import Redis from "ioredis";
+import { Redis } from "@upstash/redis";
 
-const redisUrl = process.env.UPSTASH_REDIS_URL!;
+const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-if (!redisUrl) {
-  throw new Error("Missing Redis environment variables");
+if (!redisUrl || !redisToken) {
+  throw new Error("Variáveis de ambiente do Redis estão faltando");
 }
 
 /**
  * Cliente Redis configurado para uso em todo o aplicativo
  */
-const redisClient = new Redis(redisUrl);
+const redisClient = new Redis({
+  url: redisUrl,
+  token: redisToken,
+});
 
 /**
  * Obtém um valor do cache
@@ -22,10 +26,24 @@ export async function getCache<T>(key: string): Promise<T | null> {
   const data = await redisClient.get(key);
   if (!data) return null;
 
+  console.log(
+    JSON.stringify(
+      {
+        key,
+        data,
+      },
+      null,
+      2,
+    ),
+  );
+
   try {
-    return JSON.parse(data) as T;
+    return data as T; //JSON.parse(data as unknown as string) as T;
   } catch (error) {
-    console.error(`Error parsing Redis data for key ${key}:`, error);
+    console.error(
+      `Erro ao analisar os dados do Redis para a chave ${key}:`,
+      error,
+    );
     return null;
   }
 }
@@ -44,7 +62,7 @@ export async function setCache<T>(
   const stringValue = JSON.stringify(value);
 
   if (ttlSeconds) {
-    await redisClient.set(key, stringValue, "EX", ttlSeconds);
+    await redisClient.set(key, stringValue, { ex: ttlSeconds });
   } else {
     await redisClient.set(key, stringValue);
   }

@@ -2,7 +2,12 @@
 
 import { format, parse, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ClientConfig, ConversationState, ChatMessage } from "@/types";
+import {
+  BusinessConfig,
+  ConversationState,
+  ChatMessage,
+  Intent,
+} from "@/types";
 import { getCache, setCache } from "./redisClient";
 import supabaseClient from "./supabaseClient";
 
@@ -16,28 +21,52 @@ export function formatPhoneNumber(phone: string): string {
 }
 
 /**
- * Extrai clientId da instância/waba_number
+ * Obtém o business_id a partir do número da instância (waba_number)
  */
-export function getClientIdFromInstance(instanceName: string): string {
-  // Mapeamento inicial simples
-  if (instanceName === process.env.UAZAPIGO_INSTANCE_NAME_CLIENT0) {
-    return "client0";
-  }
+export async function getBusinessIdFromWabaNumber(
+  wabaNumber: string,
+): Promise<string | null> {
+  try {
+    // Verificar cache primeiro
+    const cacheKey = `business_id:${wabaNumber}`;
+    const cachedId = await getCache<string>(cacheKey);
 
-  // Implementação futura: buscar no banco de dados
-  return "unknown";
+    if (cachedId) {
+      return cachedId;
+    }
+
+    // Buscar do banco de dados
+    const { data, error } = await supabaseClient
+      .from("businesses")
+      .select("business_id")
+      .eq("waba_number", wabaNumber)
+      .single();
+
+    if (error || !data) {
+      console.error("Erro ao buscar business_id:", error);
+      return null;
+    }
+
+    // Armazenar no cache
+    await setCache(cacheKey, data.business_id, 3600); // 1 hora
+
+    return data.business_id;
+  } catch (error) {
+    console.error("Erro em getBusinessIdFromWabaNumber:", error);
+    return null;
+  }
 }
 
 /**
- * Carrega a configuração de um cliente (com cache)
+ * Carrega a configuração de um negócio (com cache)
  */
-export async function getClientConfig(
-  clientId: string,
-): Promise<ClientConfig | null> {
+export async function getBusinessConfig(
+  businessId: string,
+): Promise<BusinessConfig | null> {
   try {
     // Verificar cache primeiro
-    const cacheKey = `client_config:${clientId}`;
-    const cachedConfig = await getCache<ClientConfig>(cacheKey);
+    const cacheKey = `business_config:${businessId}`;
+    const cachedConfig = await getCache<BusinessConfig>(cacheKey);
 
     if (cachedConfig) {
       return cachedConfig;
@@ -45,36 +74,13 @@ export async function getClientConfig(
 
     // Buscar do banco de dados
     const { data, error } = await supabaseClient
-      .from("clients")
+      .from("businesses")
       .select("*")
-      .eq("client_id", clientId)
+      .eq("business_id", businessId)
       .single();
 
     if (error || !data) {
-      // Se for client0, usar configuração padrão
-      if (clientId === "client0") {
-        const defaultConfig: ClientConfig = {
-          client_id: "client0",
-          name: "Cliente Teste",
-          waba_number: process.env.UAZAPIGO_INSTANCE_NAME_CLIENT0 || "",
-          llmApiKey: process.env.GOOGLE_API_KEY || "",
-          ragEnabled: true,
-          defaultPrompt: "Você é um assistente virtual amigável e prestativo.",
-          maxHistoryMessages: 10,
-          sessionTtlHours: 2,
-          cacheSettings: {
-            llmCacheTtlHours: 24,
-            configCacheTtlHours: 1,
-          },
-        };
-
-        // Armazenar no cache
-        await setCache(cacheKey, defaultConfig, 3600); // 1 hora
-
-        return defaultConfig;
-      }
-
-      console.error("Error fetching client config:", error);
+      console.error("Erro ao buscar configuração de negócio:", error);
       return null;
     }
 
@@ -82,10 +88,11 @@ export async function getClientConfig(
     const config = data.config || {};
 
     // Montar objeto de configuração
-    const clientConfig: ClientConfig = {
-      client_id: data.client_id,
+    const businessConfig: BusinessConfig = {
+      business_id: data.business_id,
       name: data.name,
       waba_number: data.waba_number,
+      admin_phone: data.admin_phone,
       llmApiKey: config.llmApiKey || process.env.GOOGLE_API_KEY || "",
       ragEnabled: config.ragEnabled !== undefined ? config.ragEnabled : true,
       defaultPrompt:
@@ -93,19 +100,110 @@ export async function getClientConfig(
         "Você é um assistente virtual amigável e prestativo.",
       maxHistoryMessages: config.maxHistoryMessages || 10,
       sessionTtlHours: config.sessionTtlHours || 2,
+      businessHours: config.businessHours || {
+        monday: { start: "09:00", end: "18:00" },
+        tuesday: { start: "09:00", end: "18:00" },
+        wednesday: { start: "09:00", end: "18:00" },
+        thursday: { start: "09:00", end: "18:00" },
+        friday: { start: "09:00", end: "18:00" },
+        saturday: { start: "09:00", end: "13:00" },
+        sunday: { start: null, end: null },
+      },
       cacheSettings: {
-        llmCacheTtlHours: config.llmCacheTtlHours || 24,
-        configCacheTtlHours: config.configCacheTtlHours || 1,
+        llmCacheTtlHours: config.cacheSettings?.llmCacheTtlHours || 24,
+        configCacheTtlHours: config.cacheSettings?.configCacheTtlHours || 1,
       },
     };
 
     // Armazenar no cache
-    const ttlSeconds = clientConfig.cacheSettings.configCacheTtlHours * 3600;
-    await setCache(cacheKey, clientConfig, ttlSeconds);
+    const ttlSeconds = businessConfig.cacheSettings.configCacheTtlHours * 3600;
+    await setCache(cacheKey, businessConfig, ttlSeconds);
 
-    return clientConfig;
+    return businessConfig;
   } catch (error) {
-    console.error("Error in getClientConfig:", error);
+    console.error("Erro em getBusinessConfig:", error);
+    return null;
+  }
+}
+
+/**
+ * Verifica se um número é admin de um negócio
+ */
+export async function isAdmin(
+  businessId: string,
+  phone: string,
+): Promise<boolean> {
+  try {
+    // Verificar cache primeiro
+    const cacheKey = `is_admin:${businessId}:${phone}`;
+    const cachedResult = await getCache<boolean>(cacheKey);
+
+    if (cachedResult !== null) {
+      return cachedResult;
+    }
+
+    // Chamar função RPC do Supabase
+    const { data, error } = await supabaseClient.rpc("is_admin", {
+      p_business_id: businessId,
+      p_phone: phone,
+    });
+
+    if (error) {
+      console.error("Erro ao verificar se é admin:", error);
+      return false;
+    }
+
+    // Armazenar no cache
+    await setCache(cacheKey, !!data, 3600); // 1 hora
+
+    return !!data;
+  } catch (error) {
+    console.error("Erro em isAdmin:", error);
+    return false;
+  }
+}
+
+/**
+ * Obtém ou cria um cliente no banco de dados
+ */
+export async function getOrCreateCustomer(
+  businessId: string,
+  phone: string,
+  name?: string,
+): Promise<string | null> {
+  try {
+    // Verificar se o cliente já existe
+    const { data: existingCustomer, error: selectError } = await supabaseClient
+      .from("customers")
+      .select("customer_id")
+      .eq("business_id", businessId)
+      .eq("phone", phone)
+      .single();
+
+    if (existingCustomer) {
+      return existingCustomer.customer_id;
+    }
+
+    // Se não existir, criar novo cliente
+    const { data: newCustomer, error: insertError } = await supabaseClient
+      .from("customers")
+      .insert({
+        business_id: businessId,
+        phone,
+        name,
+        last_interaction: new Date().toISOString(),
+      })
+      .select("customer_id")
+      .single();
+
+    if (insertError) {
+      console.error("Erro ao criar cliente:", insertError);
+      return null;
+    }
+
+    return newCustomer?.customer_id || null;
+  } catch (error) {
+    console.error("Erro em getOrCreateCustomer:", error);
     return null;
   }
 }
@@ -114,14 +212,23 @@ export async function getClientConfig(
  * Obtém a sessão de conversa atual
  */
 export async function getSession(
-  clientId: string,
+  businessId: string,
   userPhone: string,
 ): Promise<ConversationState> {
-  const sessionKey = `session:${clientId}:${userPhone}`;
+  const sessionKey = `session:${businessId}:${userPhone}`;
   const cachedSession = await getCache<ConversationState>(sessionKey);
 
   if (cachedSession) {
     return cachedSession;
+  }
+
+  // Verificar se é admin
+  const isAdminUser = await isAdmin(businessId, userPhone);
+
+  // Se for cliente, obter ou criar o ID
+  let userId: string | undefined;
+  if (!isAdminUser) {
+    userId = await getOrCreateCustomer(businessId, userPhone);
   }
 
   // Sessão inicial
@@ -130,6 +237,8 @@ export async function getSession(
     context_data: {},
     conversation_history: [],
     last_updated: Date.now(),
+    is_admin: isAdminUser,
+    user_id: userId,
   };
 }
 
@@ -137,12 +246,12 @@ export async function getSession(
  * Salva a sessão de conversa
  */
 export async function saveSession(
-  clientId: string,
+  businessId: string,
   userPhone: string,
   state: ConversationState,
   ttlHours?: number,
 ): Promise<void> {
-  const sessionKey = `session:${clientId}:${userPhone}`;
+  const sessionKey = `session:${businessId}:${userPhone}`;
   const ttlSeconds = ttlHours ? ttlHours * 3600 : 7200; // Padrão: 2 horas
 
   // Atualizar timestamp
@@ -183,8 +292,63 @@ export function addMessageToHistory(
  * Detecta intenção a partir do texto da mensagem
  * Implementação simples baseada em palavras-chave
  */
-export function detectIntent(message: string): string {
+export function detectIntent(message: string, isAdmin: boolean): Intent {
   const lowerMessage = message.toLowerCase();
+
+  // Se for admin, verificar comandos de administração
+  if (isAdmin) {
+    // Comandos de configuração
+    if (
+      lowerMessage.includes("configurar") ||
+      lowerMessage.includes("configuração") ||
+      lowerMessage.includes("prompt") ||
+      lowerMessage.includes("configurar chatbot")
+    ) {
+      return Intent.ADMIN_CONFIG;
+    }
+
+    // Comandos de serviços
+    if (
+      lowerMessage.includes("serviços") ||
+      lowerMessage.includes("adicionar serviço") ||
+      lowerMessage.includes("editar serviço") ||
+      lowerMessage.includes("remover serviço") ||
+      lowerMessage.includes("preços")
+    ) {
+      return Intent.ADMIN_SERVICES;
+    }
+
+    // Comandos de bloqueio de agenda
+    if (
+      lowerMessage.includes("bloquear agenda") ||
+      lowerMessage.includes("bloqueio") ||
+      lowerMessage.includes("fechar agenda") ||
+      lowerMessage.includes("indisponível")
+    ) {
+      return Intent.ADMIN_BLOCKS;
+    }
+
+    // Comandos de horários de funcionamento
+    if (
+      lowerMessage.includes("horário de funcionamento") ||
+      lowerMessage.includes("expediente") ||
+      lowerMessage.includes("dias de funcionamento")
+    ) {
+      return Intent.ADMIN_BUSINESS_HOURS;
+    }
+
+    // Comandos de relatórios
+    if (
+      lowerMessage.includes("relatório") ||
+      lowerMessage.includes("estatísticas") ||
+      lowerMessage.includes("agendamentos") ||
+      lowerMessage.includes("dashboard")
+    ) {
+      return Intent.ADMIN_REPORTS;
+    }
+  }
+
+  // Intenções comuns para todos os usuários
 
   // Keywords para agendamento
   if (
@@ -194,7 +358,32 @@ export function detectIntent(message: string): string {
     lowerMessage.includes("consulta") ||
     lowerMessage.includes("reservar")
   ) {
-    return "start_scheduling";
+    return Intent.START_SCHEDULING;
+  }
+
+  // Keywords para verificar agendamentos
+  if (
+    lowerMessage.includes("meus agendamentos") ||
+    lowerMessage.includes("meus horários") ||
+    lowerMessage.includes("minha agenda") ||
+    lowerMessage.includes("próximo agendamento")
+  ) {
+    return Intent.CHECK_APPOINTMENTS;
+  }
+
+  // Keywords para cancelamento
+  if (lowerMessage.includes("cancelar") || lowerMessage.includes("desmarcar")) {
+    return Intent.CANCEL_APPOINTMENT;
+  }
+
+  // Keywords para reagendamento
+  if (
+    lowerMessage.includes("reagendar") ||
+    lowerMessage.includes("remarcar") ||
+    lowerMessage.includes("mudar horário") ||
+    lowerMessage.includes("alterar horário")
+  ) {
+    return Intent.RESCHEDULE_APPOINTMENT;
   }
 
   // Keywords para FAQ/informações
@@ -206,16 +395,11 @@ export function detectIntent(message: string): string {
     lowerMessage.includes("dúvida") ||
     lowerMessage.includes("como funciona")
   ) {
-    return "faq";
-  }
-
-  // Keywords para cancelamento
-  if (lowerMessage.includes("cancelar") || lowerMessage.includes("desmarcar")) {
-    return "cancel_appointment";
+    return Intent.FAQ;
   }
 
   // Default
-  return "general_chat";
+  return Intent.GENERAL_CHAT;
 }
 
 /**
@@ -318,4 +502,29 @@ export function extractTime(message: string): string | null {
  */
 export function formatDate(date: Date): string {
   return format(date, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR });
+}
+
+/**
+ * Registra mensagem no histórico de conversas do banco de dados
+ */
+export async function logConversation(
+  businessId: string,
+  customerId: string | null,
+  sender: "customer" | "bot",
+  content: string,
+  intent?: string,
+  metadata?: Record<string, any>,
+): Promise<void> {
+  try {
+    await supabaseClient.from("conversation_history").insert({
+      business_id: businessId,
+      customer_id: customerId,
+      sender,
+      content,
+      intent,
+      metadata,
+    });
+  } catch (error) {
+    console.error("Erro ao registrar conversa:", error);
+  }
 }
