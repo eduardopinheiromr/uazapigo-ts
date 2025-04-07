@@ -1,194 +1,214 @@
-# UazapiGO Chatbot Backend
+# WhatsApp Bot com UAZAPI e Next.js
 
-Backend para chatbot WhatsApp multi-cliente utilizando Next.js, UazapiGO, Supabase, Redis e Google Gemini.
+Um sistema completo de chatbot para WhatsApp construído com Next.js, utilizando a API UAZAPI para comunicação com o WhatsApp e Google Gemini para inteligência artificial.
 
-## Requisitos
+## 🌟 Características
 
-- Node.js 18+ 
-- PNPM
-- Conta na UazapiGO
-- Conta no Supabase
-- Conta no Upstash Redis
-- Chave de API do Google AI (Gemini)
+- **IA Generativa**: Utiliza o Google Gemini para compreender e responder mensagens naturalmente
+- **Agendamento de Serviços**: Sistema completo para agendamento, consulta e cancelamento de serviços
+- **Administração via WhatsApp**: Comandos administrativos via chat para gerenciar o bot
+- **Suporte a Múltiplos Negócios**: Arquitetura escalável para atender múltiplos clientes
+- **RAG (Retrieval Augmented Generation)**: Enriquece respostas com conhecimento específico do negócio
+- **Cache Redis**: Sistema eficiente de cache para melhorar performance
+- **Armazenamento Supabase**: Banco de dados PostgreSQL via Supabase
+- **Arquitetura Serverless**: Facilmente implantável em plataformas como Vercel
 
-## Configuração
+## 📋 Pré-requisitos
+
+- Node.js 18+ e npm
+- Conta no [UAZAPI](https://uazapi.com) para API do WhatsApp
+- Conta no [Supabase](https://supabase.com) para banco de dados
+- Conta no [Upstash](https://upstash.com) para Redis serverless
+- Chave API do [Google AI](https://ai.google.dev/) para acesso ao Gemini
+
+## 🚀 Instalação
 
 1. Clone o repositório
-2. Instale as dependências:
+```bash
+git clone https://github.com/seu-usuario/whatsapp-bot.git
+cd whatsapp-bot
+```
+
+2. Instale as dependências
+```bash
+npm install
+```
+
+3. Configure as variáveis de ambiente
+Crie um arquivo `.env.local` com as seguintes variáveis:
+```env
+# UAZAPI
+UAZAPIGO_API_KEY=sua_chave_api_uazapi
+
+# Supabase
+SUPABASE_URL=sua_url_supabase
+SUPABASE_ANON_KEY=sua_chave_anonima_supabase
+
+# Redis
+UPSTASH_REDIS_REST_URL=sua_url_redis_upstash
+UPSTASH_REDIS_REST_TOKEN=seu_token_redis_upstash
+
+# Google API
+GOOGLE_API_KEY=sua_chave_api_google
+
+# Segurança
+WHATSAPP_VERIFY_TOKEN=token_seguro_aleatorio_para_webhook
+
+# Webhook (apenas para produção)
+WEBHOOK_URL=https://sua-aplicacao.com
+```
+
+4. Execute o projeto em desenvolvimento
+```bash
+npm run dev
+```
+
+## 🏗️ Estrutura do Projeto
+
+```
+├── lib/                    # Bibliotecas e lógica principal
+│   ├── adminHandler.ts     # Manipulador de comandos administrativos
+│   ├── coreLogic.ts        # Lógica principal de processamento de mensagens
+│   ├── googleAiClient.ts   # Cliente para API do Google Gemini
+│   ├── intentDetector.ts   # Sistema de detecção de intenções
+│   ├── logger.ts           # Sistema de logs
+│   ├── rag.ts              # Sistema de Retrieval Augmented Generation
+│   ├── redisClient.ts      # Cliente para cache Redis
+│   ├── scheduling.ts       # Lógica de agendamento de serviços
+│   ├── supabaseClient.ts   # Cliente para banco de dados Supabase
+│   ├── uazapiAdapter.ts    # Adaptador para webhook do UAZAPI
+│   ├── uazapiGoClient.ts   # Cliente para API UAZAPI
+│   └── utils.ts            # Funções utilitárias
+├── pages/                  # Páginas Next.js
+│   ├── api/                # Endpoints da API
+│   │   └── webhook/        # Webhook para UAZAPI
+│   │       └── [...events].ts # Handler de webhook
+├── sdk/                    # SDK UAZAPI (fornecido pelo projeto)
+├── scripts/                # Scripts utilitários
+│   └── deploy.js           # Script de deploy
+├── tests/                  # Testes automatizados
+├── types/                  # Definições de tipos TypeScript
+│   └── index.ts            # Tipos globais do projeto
+└── README.md               # Documentação
+```
+
+## 🔧 Configuração do Banco de Dados
+
+O sistema utiliza [Supabase](https://supabase.com) como banco de dados PostgreSQL. A estrutura inclui as seguintes tabelas:
+
+### Tabela `businesses`
+- `business_id` - Identificador único do negócio
+- `name` - Nome do negócio
+- `waba_number` - Número do WhatsApp Business API
+- `admin_phone` - Número do administrador do negócio
+- `config` - Configurações em JSONB
+
+### Outras tabelas incluem:
+- `customers` - Clientes do negócio
+- `services` - Serviços oferecidos
+- `appointments` - Agendamentos realizados
+- `schedule_blocks` - Bloqueios na agenda
+- `knowledge_base_chunks` - Base de conhecimento para RAG
+- `admins` - Administradores adicionais
+- `conversation_history` - Histórico de mensagens
+
+Execute o script SQL encontrado em `migrations/init.sql` para criar a estrutura inicial no seu banco de dados Supabase.
+
+## 📱 Comandos Administrativos
+
+Os seguintes comandos administrativos estão disponíveis através do WhatsApp para o número administrador:
+
+### Gerais
+- `ajuda` - Exibe comandos disponíveis
+
+### Configuração
+- `mostrar prompt` - Visualiza prompt atual
+- `atualizar prompt: [texto]` - Altera o prompt base
+
+### Serviços
+- `mostrar serviços` - Lista serviços cadastrados
+- `adicionar serviço` - Cadastra novo serviço
+- `atualizar serviço` - Modifica serviço existente
+- `ativar serviço: [nome]` - Ativa um serviço
+- `desativar serviço: [nome]` - Desativa um serviço
+
+### RAG
+- `ativar rag` - Ativa RAG
+- `desativar rag` - Desativa RAG
+
+### Horários
+- `mostrar horários` - Ver horários de funcionamento
+- `atualizar horários` - Modificar horários de funcionamento
+
+### Agenda
+- `bloquear agenda` - Criar bloqueio na agenda
+- `ver bloqueios` - Listar bloqueios de agenda
+
+### Relatórios
+- `estatísticas` - Ver estatísticas gerais
+
+## 🧪 Testes
+
+Execute os testes automatizados:
 
 ```bash
-pnpm install
+npm test
 ```
 
-3. Configure as variáveis de ambiente:
+## 🚢 Deploy
 
-Copie o arquivo `.env.example` para `.env` e preencha com suas credenciais:
+Para realizar o deploy, você pode usar o script automatizado:
 
 ```bash
-cp .env.example .env
+node scripts/deploy.js
 ```
 
-4. Execute o projeto localmente:
-
+Ou manualmente:
 ```bash
-pnpm dev
+npm run build
+vercel deploy --prod
 ```
 
-5. Para expor seu servidor local à internet (para testes do webhook), use ngrok:
+## 🔄 Configurando o Webhook
 
-```bash
-npx ngrok http 3000
-```
+1. Faça deploy da aplicação em um servidor acessível publicamente
+2. Configure o webhook no dashboard do UAZAPI:
+   - URL: `https://seu-dominio.com/api/webhook`
+   - Eventos: Mensagens, Status, etc.
+3. Certifique-se de que o token de segurança no webhook corresponde ao configurado em `WHATSAPP_VERIFY_TOKEN`
 
-6. Configure o webhook no painel da UazapiGO com a URL gerada pelo ngrok:
-   - URL: `https://seu-id-ngrok.ngrok.io/api/whatsapp/webhook`
-   - Token de verificação: Mesmo valor configurado em `WHATSAPP_VERIFY_TOKEN`
+## 🛠️ Configuração do RAG (Retrieval Augmented Generation)
 
-## Estrutura do Projeto
+1. Adicione documentos à base de conhecimento usando o endpoint `/api/admin/knowledge`
+2. Ative o RAG usando o comando administrativo `ativar rag`
+3. O sistema automaticamente enriquecerá as respostas com informações relevantes
 
-- `/app` - Rotas e componentes Next.js
-- `/app/api` - Route Handlers da API
-- `/lib` - Módulos compartilhados
-- `/types` - Definições de tipos TypeScript
+## 📚 Fluxo do Sistema
 
-## Deploy na Vercel
+1. O webhook recebe eventos do UAZAPI
+2. O adaptador processa e enriquece os dados
+3. A lógica principal detecta intenções (comandos, agendamento, etc.)
+4. Respostas são geradas via IA ou fluxos estruturados
+5. A resposta é enviada ao usuário via API UAZAPI
 
-1. Conecte seu repositório à Vercel
-2. Configure as variáveis de ambiente no painel da Vercel
-3. Deploy!
+## 🤝 Contribuição
 
-## Configuração do Supabase
+Contribuições são bem-vindas! Por favor, siga estes passos:
 
-Execute os seguintes comandos SQL no Supabase para configurar o banco de dados:
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/NovaFeature`)
+3. Faça commit de suas mudanças (`git commit -m 'Adiciona nova feature'`)
+4. Faça push para a branch (`git push origin feature/NovaFeature`)
+5. Abra um Pull Request
 
-```sql
--- Habilitar extensão vector para busca semântica
-CREATE EXTENSION IF NOT EXISTS vector;
+## 📄 Licença
 
--- Tabela de clientes
-CREATE TABLE clients (
-  client_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  waba_number TEXT UNIQUE,
-  config JSONB DEFAULT '{}'::JSONB
-);
+Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
 
--- Tabela de base de conhecimento
-CREATE TABLE knowledge_base_chunks (
-  chunk_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  client_id UUID REFERENCES clients(client_id),
-  content TEXT NOT NULL,
-  embedding VECTOR(384)
-);
+## 📧 Contato
 
--- Tabela de agendamentos
-CREATE TABLE appointments (
-  appointment_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  client_id UUID REFERENCES clients(client_id),
-  customer_phone TEXT NOT NULL,
-  service TEXT NOT NULL,
-  start_time TIMESTAMPTZ NOT NULL,
-  end_time TIMESTAMPTZ NOT NULL,
-  status TEXT NOT NULL DEFAULT 'confirmed'
-);
+Para questões ou suporte, por favor entre em contato via [email@exemplo.com](mailto:email@exemplo.com).
 
--- Índices
-CREATE INDEX idx_appointments_client_id ON appointments(client_id);
-CREATE INDEX idx_appointments_customer_phone ON appointments(customer_phone);
-CREATE INDEX idx_appointments_start_time ON appointments(start_time);
+---
 
--- Função para busca semântica
-CREATE OR REPLACE FUNCTION match_knowledge_base (
-  query_embedding VECTOR(384),
-  match_threshold FLOAT,
-  match_count INT,
-  client_filter UUID
-)
-RETURNS TABLE (
-  chunk_id UUID,
-  content TEXT,
-  similarity FLOAT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RETURN QUERY
-  SELECT
-    kb.chunk_id,
-    kb.content,
-    1 - (kb.embedding <=> query_embedding) AS similarity
-  FROM knowledge_base_chunks AS kb
-  WHERE kb.client_id = client_filter AND 1 - (kb.embedding <=> query_embedding) > match_threshold
-  ORDER BY similarity DESC
-  LIMIT match_count;
-END;
-$$;
-
--- Função para criar agendamento (transação)
-CREATE OR REPLACE FUNCTION create_appointment_transaction(
-  p_client_id UUID,
-  p_customer_phone TEXT,
-  p_service TEXT,
-  p_start_time TIMESTAMPTZ,
-  p_end_time TIMESTAMPTZ,
-  p_status TEXT
-)
-RETURNS UUID
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_appointment_id UUID;
-  v_conflict_count INT;
-BEGIN
-  -- Verificar conflitos
-  SELECT COUNT(*)
-  INTO v_conflict_count
-  FROM appointments
-  WHERE client_id = p_client_id
-    AND status = 'confirmed'
-    AND (
-      (start_time <= p_start_time AND end_time > p_start_time) OR
-      (start_time < p_end_time AND end_time >= p_end_time) OR
-      (start_time >= p_start_time AND end_time <= p_end_time)
-    );
-  
-  IF v_conflict_count > 0 THEN
-    RAISE EXCEPTION 'Conflito de horário detectado';
-  END IF;
-  
-  -- Inserir o agendamento
-  INSERT INTO appointments (
-    client_id,
-    customer_phone,
-    service,
-    start_time,
-    end_time,
-    status
-  )
-  VALUES (
-    p_client_id,
-    p_customer_phone,
-    p_service,
-    p_start_time,
-    p_end_time,
-    p_status
-  )
-  RETURNING appointment_id INTO v_appointment_id;
-  
-  RETURN v_appointment_id;
-END;
-$$;
-
--- Dados iniciais para o cliente de teste (client0)
-INSERT INTO clients (client_id, name, waba_number, config)
-VALUES (
-  'client0',
-  'Cliente Teste',
-  'sua_instancia_uazapigo',
-  '{"ragEnabled": true, "maxHistoryMessages": 10, "sessionTtlHours": 2}'
-);
-```
-
-## Licença
-
-MIT
+Desenvolvido com 💙 usando Next.js, UAZAPI e Google Gemini.
