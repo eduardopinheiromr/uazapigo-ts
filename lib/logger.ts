@@ -1,5 +1,6 @@
 // lib/logger.ts
 
+import chalk from "chalk"; // Importa a biblioteca chalk
 import supabaseClient from "./supabaseClient";
 
 /**
@@ -16,13 +17,13 @@ export enum LogLevel {
  * Interface para entrada de log
  */
 export interface LogEntry {
-  timestamp: string;
+  timestamp: string; // Manter ISO string para precisão e DB
   level: LogLevel;
   message: string;
   business_id?: string;
   phone?: string;
   intent?: string;
-  [key: string]: any;
+  [key: string]: any; // Permite metadados adicionais
 }
 
 /**
@@ -32,6 +33,7 @@ export interface LoggerOptions {
   minLevel: LogLevel;
   persistToDatabase: boolean;
   includeMetadata: boolean;
+  prettyPrintConsole: boolean; // Nova opção para controlar a formatação bonita
 }
 
 // Configuração padrão
@@ -39,27 +41,44 @@ const defaultOptions: LoggerOptions = {
   minLevel: LogLevel.INFO,
   persistToDatabase: true,
   includeMetadata: true,
+  prettyPrintConsole: true, // Habilitado por padrão
 };
 
 // Configuração atual
 let currentOptions: LoggerOptions = { ...defaultOptions };
 
-/**
- * Converte nível de log para valor numérico para comparação
- */
+// Mapeamento de níveis para valores numéricos
 function getLogLevelValue(level: LogLevel): number {
-  switch (level) {
-    case LogLevel.DEBUG:
-      return 0;
-    case LogLevel.INFO:
-      return 1;
-    case LogLevel.WARN:
-      return 2;
-    case LogLevel.ERROR:
-      return 3;
-    default:
-      return 1;
-  }
+  const levels = {
+    [LogLevel.DEBUG]: 0,
+    [LogLevel.INFO]: 1,
+    [LogLevel.WARN]: 2,
+    [LogLevel.ERROR]: 3,
+  };
+  return levels[level] ?? levels[LogLevel.INFO];
+}
+
+// Mapeamento de níveis para cores do Chalk
+const levelColors = {
+  [LogLevel.DEBUG]: chalk.gray,
+  [LogLevel.INFO]: chalk.blue,
+  [LogLevel.WARN]: chalk.yellow,
+  [LogLevel.ERROR]: chalk.red.bold, // Erros em negrito e vermelho
+};
+
+// Mapeamento de níveis para emojis
+const levelEmojis = {
+  [LogLevel.DEBUG]: "🐛",
+  [LogLevel.INFO]: "ℹ️",
+  [LogLevel.WARN]: "⚠️",
+  [LogLevel.ERROR]: "🔥",
+};
+
+/**
+ * Formata um timestamp ISO para um formato mais legível no console
+ */
+function formatConsoleTimestamp(isoTimestamp: string): string {
+  return new Date(isoTimestamp).toLocaleTimeString(); // Ex: 14:35:10
 }
 
 /**
@@ -86,8 +105,8 @@ export async function logMessage(
       ...(currentOptions.includeMetadata && metadata ? metadata : {}),
     };
 
-    // Log para console
-    outputToConsole(level, logEntry);
+    // Log para console com formatação aprimorada
+    outputToConsole(logEntry);
 
     // Salvar no banco se configurado
     if (currentOptions.persistToDatabase) {
@@ -95,33 +114,85 @@ export async function logMessage(
     }
   } catch (error) {
     // Fallback para não causar erros em cascata
-    console.error("Error in logging system:", error);
-    console.error("Original log:", { level, message, metadata });
+    console.error(chalk.magenta("Error in logging system:"), error); // Cor no erro do logger
+    console.error(chalk.magenta("Original log:"), { level, message, metadata });
   }
 }
 
 /**
- * Exibe log no console
+ * Exibe log no console com cores, emojis e formatação
  */
-function outputToConsole(level: LogLevel, logEntry: LogEntry): void {
-  const { timestamp, message, ...rest } = logEntry;
-  const metadata = Object.keys(rest).length > 1 ? rest : {};
+function outputToConsole(logEntry: LogEntry): void {
+  const { timestamp, level, message, ...rest } = logEntry;
 
-  const formattedMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  // Usa formatação bonita apenas se habilitado
+  if (currentOptions.prettyPrintConsole) {
+    const color = levelColors[level] || chalk.white;
+    const emoji = levelEmojis[level] || "➡️";
+    const consoleTimestamp = chalk.dim(formatConsoleTimestamp(timestamp)); // Timestamp mais sutil
+    const levelString = `[${level.toUpperCase()}]`.padEnd(7); // Alinha os níveis
 
-  switch (level) {
-    case LogLevel.ERROR:
-      console.error(formattedMessage, metadata);
-      break;
-    case LogLevel.WARN:
-      console.warn(formattedMessage, metadata);
-      break;
-    case LogLevel.INFO:
-      console.info(formattedMessage, metadata);
-      break;
-    case LogLevel.DEBUG:
-      console.debug(formattedMessage, metadata);
-      break;
+    // Monta a linha de log principal
+    let output = `${consoleTimestamp} ${emoji} ${color(levelString)} ${message}`;
+
+    // Verifica se há metadados relevantes para exibir (excluindo os campos já usados)
+    const metadataToPrint =
+      currentOptions.includeMetadata && Object.keys(rest).length > 0
+        ? rest
+        : null;
+
+    if (metadataToPrint) {
+      // Tenta extrair um erro para logar o stack trace separadamente
+      let errorStack: string | undefined;
+      if (metadataToPrint.error instanceof Error) {
+        errorStack = metadataToPrint.error.stack;
+        // Remove o erro dos metadados para não duplicar a informação
+        delete metadataToPrint.error;
+      }
+
+      // Formata os metadados restantes como JSON indentado e colorido
+      if (Object.keys(metadataToPrint).length > 0) {
+        try {
+          const metadataString = JSON.stringify(metadataToPrint, null, 2);
+          // Adiciona os metadados em uma nova linha, com cor diferente
+          output += `\n${chalk.cyan(metadataString)}`;
+        } catch (e) {
+          // Se JSON.stringify falhar (ex: objetos circulares), loga de forma simples
+          output += `\n${chalk.cyan("Metadata (raw):")} ${require("util").inspect(metadataToPrint, { depth: null, colors: true })}`;
+        }
+      }
+
+      // Loga a linha principal e os metadados
+      console.log(output);
+
+      // Se havia um stack trace, loga-o separadamente, em vermelho
+      if (errorStack) {
+        console.log(chalk.red(errorStack));
+      }
+    } else {
+      // Se não há metadados, apenas loga a linha principal
+      console.log(output);
+    }
+  } else {
+    // Fallback para o formato antigo se prettyPrintConsole for false
+    const fallbackMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+    const metadata = Object.keys(rest).length > 0 ? rest : undefined;
+
+    switch (level) {
+      case LogLevel.ERROR:
+        console.error(fallbackMessage, metadata || ""); // Evita 'undefined' extra no console
+        break;
+      case LogLevel.WARN:
+        console.warn(fallbackMessage, metadata || "");
+        break;
+      case LogLevel.INFO:
+        console.info(fallbackMessage, metadata || "");
+        break;
+      case LogLevel.DEBUG:
+      default:
+        console.debug(fallbackMessage, metadata || "");
+        break;
+    }
   }
 }
 
@@ -130,20 +201,33 @@ function outputToConsole(level: LogLevel, logEntry: LogEntry): void {
  */
 async function persistToDatabase(logEntry: LogEntry): Promise<void> {
   try {
+    // Cria uma cópia para não modificar o objeto original antes de enviar ao DB
+    const logDataForDb = { ...logEntry };
+
+    // Opcional: Remover campos que não existem ou não interessam na tabela 'system_logs'
+    // delete logDataForDb.algumCampoExtra;
+
     // Salvar na tabela de logs
-    await supabaseClient.from("system_logs").insert([
+    const { error } = await supabaseClient.from("system_logs").insert([
       {
-        level: logEntry.level,
-        message: logEntry.message,
-        business_id: logEntry.business_id,
-        phone: logEntry.phone,
-        intent: logEntry.intent,
-        metadata: logEntry,
+        level: logDataForDb.level,
+        message: logDataForDb.message,
+        business_id: logDataForDb.business_id,
+        phone: logDataForDb.phone,
+        intent: logDataForDb.intent,
+        // Guarda *todos* os metadados extras em uma coluna JSONB
+        // Certifique-se que a coluna 'metadata' no Supabase é do tipo JSONB
+        metadata: logDataForDb,
       },
     ]);
+
+    if (error) {
+      throw error; // Joga o erro para ser capturado pelo catch
+    }
   } catch (dbError) {
-    // Silenciar erros de persistência para evitar cascata
-    console.error("Failed to persist log to database:", dbError);
+    // Usa chalk aqui também para consistência no log de erro interno
+    console.error(chalk.magenta("Failed to persist log to database:"), dbError);
+    // Não relança o erro para evitar que a falha no log quebre a aplicação principal
   }
 }
 
@@ -155,6 +239,7 @@ export function configureLogger(options: Partial<LoggerOptions>): void {
     ...currentOptions,
     ...options,
   };
+  console.log(chalk.green("Logger configured:"), currentOptions); // Loga a nova configuração
 }
 
 /**
@@ -170,8 +255,17 @@ export const logger = {
   warn: (message: string, metadata?: Record<string, any>) =>
     logMessage(LogLevel.WARN, message, metadata),
 
-  error: (message: string, metadata?: Record<string, any>) =>
-    logMessage(LogLevel.ERROR, message, metadata),
+  // Permite passar um Error diretamente como metadado para tratamento especial
+  error: (message: string, metadataOrError?: Record<string, any> | Error) => {
+    let metadata: Record<string, any> | undefined;
+    if (metadataOrError instanceof Error) {
+      // Se for um erro, coloca-o dentro de um objeto de metadados padronizado
+      metadata = { error: metadataOrError };
+    } else {
+      metadata = metadataOrError;
+    }
+    logMessage(LogLevel.ERROR, message, metadata);
+  },
 
   configure: (options: Partial<LoggerOptions>) => configureLogger(options),
 };

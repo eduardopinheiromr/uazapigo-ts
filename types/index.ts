@@ -1,5 +1,36 @@
 // types/index.ts
 
+export type MessagePayload = {
+  EventType: string;
+  message: {
+    buttonOrListid: string;
+    chatid: string;
+    content: string;
+    convertOptions: string;
+    edited: string;
+    fromMe: boolean;
+    groupName: string;
+    id: string;
+    isGroup: boolean;
+    mediaType: string;
+    messageTimestamp: number;
+    messageType: string;
+    messageid: string;
+    owner: string;
+    quoted: string;
+    reaction: string;
+    sender: string;
+    senderName: string;
+    source: string;
+    status: string;
+    text: string;
+    type: string;
+    vote: string;
+  };
+  owner: string;
+  token: string;
+};
+
 /**
  * Formato padrão para payloads do UAZAPI processados pela aplicação
  */
@@ -42,6 +73,7 @@ export interface ConversationState {
   last_updated: number;
   is_admin: boolean;
   user_id?: string; // customer_id ou admin_id
+  temp_context?: Record<string, any>; // Contexto temporário para armazenar dados entre trocas de fluxo
 }
 
 /**

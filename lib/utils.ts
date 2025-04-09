@@ -843,6 +843,521 @@ export function truncateText(text: string, maxLength: number = 500): string {
  * @param businessId ID do negócio
  * @param userPhone Telefone do usuário
  */
+// export async function getSession(
+//   businessId: string,
+//   userPhone: string,
+// ): Promise<ConversationState> {
+//   try {
+//     if (!businessId || !userPhone) {
+//       logger.error("Invalid parameters for getSession", {
+//         businessId: businessId || "undefined",
+//         userPhone: userPhone || "undefined",
+//       });
+//       return createNewSession(businessId, userPhone);
+//     }
+
+//     const sessionKey = `session:${businessId}:${userPhone}`;
+//     const cachedSession = await getCache<ConversationState>(sessionKey);
+
+//     if (cachedSession) {
+//       // Validar a estrutura do estado da sessão
+//       const validatedSession = validateSession(cachedSession);
+//       logger.debug("Session found in cache", {
+//         businessId,
+//         userPhone,
+//         hasHistory:
+//           Array.isArray(validatedSession.conversation_history) &&
+//           validatedSession.conversation_history.length > 0,
+//         hasContext:
+//           !!validatedSession.context_data &&
+//           Object.keys(validatedSession.context_data).length > 0,
+//         intent: validatedSession.current_intent,
+//       });
+//       return validatedSession;
+//     }
+
+//     logger.info("No session found, creating new session", {
+//       businessId,
+//       userPhone,
+//     });
+//     return await createNewSession(businessId, userPhone);
+//   } catch (error) {
+//     logger.error("Error in getSession", {
+//       error: error instanceof Error ? error.message : String(error),
+//       stack: error instanceof Error ? error.stack : undefined,
+//       businessId,
+//       userPhone,
+//     });
+
+//     // Retornar uma sessão padrão em caso de erro
+//     return createEmptySession();
+//   }
+// }
+
+/**
+ * Cria uma nova sessão para o usuário
+ * Função separada para melhor modularização
+ */
+// async function createNewSession(
+//   businessId: string,
+//   userPhone: string,
+// ): Promise<ConversationState> {
+//   try {
+//     // Verificar se é admin
+//     const isAdminUser = await isAdmin(businessId, userPhone);
+
+//     // Se for cliente, obter ou criar o ID
+//     let userId: string | undefined;
+//     if (!isAdminUser) {
+//       userId = await getOrCreateCustomer(businessId, userPhone);
+//     }
+
+//     // Sessão inicial
+//     const newSession: ConversationState = {
+//       business_id: businessId,
+//       current_intent: null,
+//       context_data: {},
+//       conversation_history: [], // Garantir que é inicializado como array vazio
+//       last_updated: Date.now(),
+//       is_admin: isAdminUser,
+//       user_id: userId,
+//     };
+
+//     // Salvar a nova sessão imediatamente
+//     const ttlHours = 2; // Default TTL
+//     await saveSession(businessId, userPhone, newSession, ttlHours);
+
+//     logger.info("New session created", {
+//       businessId,
+//       userPhone,
+//       isAdmin: isAdminUser,
+//       userId: userId || "none",
+//     });
+
+//     return newSession;
+//   } catch (error) {
+//     logger.error("Error creating new session", {
+//       error: error instanceof Error ? error.message : String(error),
+//       businessId,
+//       userPhone,
+//     });
+
+//     return createEmptySession();
+//   }
+// }
+
+/**
+ * Cria uma sessão vazia em caso de erro
+ */
+// function createEmptySession(): ConversationState {
+//   return {
+//     current_intent: null,
+//     context_data: {},
+//     conversation_history: [],
+//     last_updated: Date.now(),
+//     is_admin: false,
+//   };
+// }
+
+/**
+ * Valida e corrige problemas comuns na estrutura da sessão
+ * @param session Sessão a ser validada
+ */
+// function validateSession(session: ConversationState): ConversationState {
+//   // Clonar a sessão para evitar mutações indesejadas
+//   const validatedSession = { ...session };
+
+//   // Garantir que conversation_history é um array
+//   if (!Array.isArray(validatedSession.conversation_history)) {
+//     logger.warn("conversation_history não é um array, inicializando", {
+//       businessId: validatedSession.business_id,
+//       isAdmin: validatedSession.is_admin,
+//     });
+//     validatedSession.conversation_history = [];
+//   }
+
+//   // Garantir que context_data existe
+//   if (!validatedSession.context_data) {
+//     validatedSession.context_data = {};
+//   }
+
+//   // Verificar e restaurar context_data se parece estar corrompido
+//   if (typeof validatedSession.context_data !== "object") {
+//     logger.warn("context_data corrompido, redefinindo", {
+//       businessId: validatedSession.business_id,
+//       contextType: typeof validatedSession.context_data,
+//     });
+//     validatedSession.context_data = {};
+//   }
+
+//   // Verificar intenção atual
+//   if (
+//     validatedSession.current_intent &&
+//     typeof validatedSession.current_intent !== "string"
+//   ) {
+//     logger.warn("current_intent inválido, redefinindo", {
+//       businessId: validatedSession.business_id,
+//       intentType: typeof validatedSession.current_intent,
+//     });
+//     validatedSession.current_intent = null;
+//   }
+
+//   // Verificar timestamp
+//   if (
+//     !validatedSession.last_updated ||
+//     typeof validatedSession.last_updated !== "number"
+//   ) {
+//     validatedSession.last_updated = Date.now();
+//   }
+
+//   return validatedSession;
+// }
+
+/**
+ * Salva a sessão de conversa com validação reforçada
+ */
+// export async function saveSession(
+//   businessId: string,
+//   userPhone: string,
+//   state: ConversationState,
+//   ttlHours?: number,
+// ): Promise<void> {
+//   try {
+//     if (!businessId || !userPhone || !state) {
+//       logger.error("Invalid parameters for saveSession", {
+//         hasBusiness: !!businessId,
+//         hasPhone: !!userPhone,
+//         hasState: !!state,
+//       });
+//       return;
+//     }
+
+//     const sessionKey = `session:${businessId}:${userPhone}`;
+//     const ttlSeconds = ttlHours ? ttlHours * 3600 : 7200; // Padrão: 2 horas
+
+//     // Atualizar timestamp
+//     state.last_updated = Date.now();
+
+//     // Garantir business_id está definido na sessão
+//     if (!state.business_id) {
+//       state.business_id = businessId;
+//     }
+
+//     // Garantir que conversation_history é um array antes de salvar
+//     if (!Array.isArray(state.conversation_history)) {
+//       state.conversation_history = [];
+//     }
+
+//     // Validar e limpar o estado
+//     const validatedState = validateSession(state);
+
+//     logger.debug("Saving session to cache", {
+//       businessId,
+//       userPhone,
+//       ttlHours,
+//       intent: validatedState.current_intent,
+//       historyLength: validatedState.conversation_history.length,
+//       contextKeys: Object.keys(validatedState.context_data),
+//     });
+
+//     await setCache(sessionKey, validatedState, ttlSeconds);
+//   } catch (error) {
+//     logger.error("Error in saveSession", {
+//       error: error instanceof Error ? error.message : String(error),
+//       stack: error instanceof Error ? error.stack : undefined,
+//       businessId,
+//       userPhone,
+//     });
+
+//     // Tentar salvar uma versão simplificada se a sessão completa falhar
+//     try {
+//       const sessionKey = `session:${businessId}:${userPhone}`;
+//       const simplifiedState = {
+//         current_intent: state?.current_intent || null,
+//         context_data: {},
+//         conversation_history: [],
+//         last_updated: Date.now(),
+//         is_admin: state?.is_admin || false,
+//         user_id: state?.user_id,
+//       };
+
+//       await setCache(sessionKey, simplifiedState, 7200);
+//       logger.info("Saved simplified session as fallback", {
+//         businessId,
+//         userPhone,
+//       });
+//     } catch (fallbackError) {
+//       logger.error("Critical error: Failed to save even simplified session", {
+//         error:
+//           fallbackError instanceof Error
+//             ? fallbackError.message
+//             : String(fallbackError),
+//         businessId,
+//         userPhone,
+//       });
+//     }
+//   }
+// }
+
+/**
+ * Adiciona uma mensagem ao histórico da conversa com validação reforçada
+ */
+// export function addMessageToHistory(
+//   state: ConversationState,
+//   role: "user" | "bot",
+//   content: string,
+//   maxMessages: number = 10,
+// ): ConversationState {
+//   try {
+//     if (!state || !content) {
+//       logger.warn("Invalid parameters for addMessageToHistory", {
+//         hasState: !!state,
+//         hasContent: !!content,
+//         role,
+//       });
+
+//       // Se state não existir, criar um novo
+//       if (!state) {
+//         state = createEmptySession();
+//       }
+//     }
+
+//     // Criar uma cópia do estado para evitar mutação acidental
+//     const newState = { ...state };
+
+//     // Garantir que conversation_history é um array
+//     if (!Array.isArray(newState.conversation_history)) {
+//       logger.warn("conversation_history não é um array, inicializando", {
+//         businessId: newState.business_id,
+//         isAdmin: newState.is_admin,
+//       });
+//       newState.conversation_history = [];
+//     }
+
+//     // Adicionar nova mensagem - validar conteúdo
+//     newState.conversation_history.push({
+//       role,
+//       content: String(content).slice(0, 4000), // Limitar tamanho para evitar problemas
+//       timestamp: Date.now(),
+//     });
+
+//     // Limitar o tamanho do histórico
+//     if (newState.conversation_history.length > maxMessages) {
+//       newState.conversation_history = newState.conversation_history.slice(
+//         -maxMessages,
+//       );
+//     }
+
+//     logger.debug("Message added to history", {
+//       businessId: newState.business_id,
+//       role,
+//       contentLength: content.length,
+//       historySize: newState.conversation_history.length,
+//     });
+
+//     return newState;
+//   } catch (error) {
+//     logger.error("Error in addMessageToHistory", {
+//       error: error instanceof Error ? error.message : String(error),
+//       stateType: typeof state,
+//       hasConversationHistory: state && "conversation_history" in state,
+//     });
+
+//     // Em caso de erro, retornar um estado com array vazio
+//     return {
+//       ...state,
+//       conversation_history: [
+//         {
+//           role,
+//           content,
+//           timestamp: Date.now(),
+//         },
+//       ],
+//     };
+//   }
+// }
+
+/**
+ * Função para extrair data com melhor detecção
+ */
+// export function extractDate(message: string): Date | null {
+//   try {
+//     if (!message) return null;
+
+//     // Normalizar o texto para facilitar a detecção
+//     const lowerMessage = message.toLowerCase().trim();
+//     const today = new Date();
+
+//     // Detecção de palavras-chave como "hoje", "amanhã", etc.
+//     if (lowerMessage.includes("hoje")) {
+//       return today;
+//     }
+
+//     if (lowerMessage.includes("amanhã") || lowerMessage.includes("amanha")) {
+//       return addDays(today, 1);
+//     }
+
+//     if (
+//       lowerMessage.includes("depois de amanhã") ||
+//       lowerMessage.includes("depois de amanha")
+//     ) {
+//       return addDays(today, 2);
+//     }
+
+//     // Detecção de dias específicos da semana
+//     const weekdayMap: Record<string, number> = {
+//       domingo: 0,
+//       segunda: 1,
+//       "segunda-feira": 1,
+//       "segunda feira": 1,
+//       terça: 2,
+//       terca: 2,
+//       "terça-feira": 2,
+//       "terca-feira": 2,
+//       "terça feira": 2,
+//       "terca feira": 2,
+//       quarta: 3,
+//       "quarta-feira": 3,
+//       "quarta feira": 3,
+//       quinta: 4,
+//       "quinta-feira": 4,
+//       "quinta feira": 4,
+//       sexta: 5,
+//       "sexta-feira": 5,
+//       "sexta feira": 5,
+//       sábado: 6,
+//       sabado: 6,
+//     };
+
+//     for (const [weekday, dayIndex] of Object.entries(weekdayMap)) {
+//       if (lowerMessage.includes(weekday)) {
+//         const targetDate = new Date(today);
+//         const currentDay = today.getDay();
+//         let daysToAdd = dayIndex - currentDay;
+
+//         // Se o dia já passou nesta semana, ir para a próxima
+//         if (daysToAdd <= 0) {
+//           daysToAdd += 7;
+//         }
+
+//         targetDate.setDate(today.getDate() + daysToAdd);
+//         return targetDate;
+//       }
+//     }
+
+//     // Detecção de formatos DD/MM/YYYY, DD-MM-YYYY, etc.
+//     // Nova regex melhorada que considera variações de separadores
+//     const dateRegexes = [
+//       // DD/MM/YYYY ou DD/MM/YY
+//       /(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/g,
+//       // "dia" DD
+//       /dia\s+(\d{1,2})(?:\s+de\s+(\w+))?(?:\s+de\s+(\d{4}))?/i,
+//       // DD "de" Mês
+//       /(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?/i,
+//     ];
+
+//     for (const regex of dateRegexes) {
+//       const match = regex.exec(message);
+//       if (match) {
+//         // Para o formato DD/MM/YYYY
+//         if (match[1] && match[2]) {
+//           const day = match[1].padStart(2, "0");
+//           const month = match[2].padStart(2, "0");
+//           const year = match[3]
+//             ? match[3].length === 2
+//               ? `20${match[3]}`
+//               : match[3]
+//             : new Date().getFullYear().toString();
+
+//           const dateStr = `${year}-${month}-${day}`;
+//           const date = new Date(dateStr);
+
+//           if (isValid(date)) {
+//             return date;
+//           }
+//         }
+//         // Para formatos com nome do mês, implementar em versões futuras
+//       }
+//     }
+
+//     return null;
+//   } catch (error) {
+//     logger.error("Error extracting date", {
+//       error: error instanceof Error ? error.message : String(error),
+//       message,
+//     });
+//     return null;
+//   }
+// }
+
+/**
+ * Extrai hora de uma string com detecção melhorada
+ */
+// export function extractTime(message: string): string | null {
+//   try {
+//     if (!message) return null;
+
+//     // Normalizar o texto
+//     const cleanMessage = message.toLowerCase().trim();
+
+//     // Array de regexes para diferentes formatos de hora
+//     const timePatterns = [
+//       // HH:MM (formato 24h)
+//       /(\d{1,2}):(\d{2})/i,
+//       // HHh ou HHhMM
+//       /(\d{1,2})h(\d{2})?/i,
+//       // HH horas e MM minutos
+//       /(\d{1,2})\s*horas(?:\s*e\s*(\d{1,2})\s*minutos)?/i,
+//       // período aproximado (manhã, tarde, noite)
+//       /(manh[ãa]|tarde|noite)/i,
+//     ];
+
+//     // Verificar regexes de horário específico
+//     for (const pattern of timePatterns.slice(0, 3)) {
+//       const match = cleanMessage.match(pattern);
+//       if (match) {
+//         let hour = parseInt(match[1]);
+//         let minute = match[2] ? parseInt(match[2]) : 0;
+
+//         // Validar hora e minuto
+//         if (hour >= 0 && hour <= 23 && minute >= 0 && minute < 60) {
+//           return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+//         }
+//       }
+//     }
+
+//     // Verificar períodos do dia (aproximados)
+//     const periodMatch = cleanMessage.match(/(manh[ãa]|tarde|noite)/i);
+//     if (periodMatch) {
+//       const period = periodMatch[1].toLowerCase();
+//       // Retornar horário aproximado com base no período
+//       if (period.includes("manha") || period.includes("manhã")) {
+//         return "10:00"; // Meio da manhã
+//       } else if (period.includes("tarde")) {
+//         return "15:00"; // Meio da tarde
+//       } else if (period.includes("noite")) {
+//         return "19:00"; // Início da noite
+//       }
+//     }
+
+//     // Se chegou aqui, não encontrou nenhum formato válido
+//     return null;
+//   } catch (error) {
+//     logger.error("Error extracting time", {
+//       error: error instanceof Error ? error.message : String(error),
+//       message,
+//     });
+//     return null;
+//   }
+// }
+
+// Melhorias para validação de sessão em utils.ts
+
+/**
+ * Obtém a sessão de conversa atual com melhor validação e recuperação
+ * @param businessId ID do negócio
+ * @param userPhone Telefone do usuário
+ */
 export async function getSession(
   businessId: string,
   userPhone: string,
@@ -1178,7 +1693,7 @@ export function addMessageToHistory(
 }
 
 /**
- * Função para extrair data com melhor detecção
+ * Função estendida para extração de data
  */
 export function extractDate(message: string): Date | null {
   try {
@@ -1194,15 +1709,24 @@ export function extractDate(message: string): Date | null {
     }
 
     if (lowerMessage.includes("amanhã") || lowerMessage.includes("amanha")) {
-      return addDays(today, 1);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      return tomorrow;
     }
 
     if (
       lowerMessage.includes("depois de amanhã") ||
       lowerMessage.includes("depois de amanha")
     ) {
-      return addDays(today, 2);
+      const dayAfterTomorrow = new Date(today);
+      dayAfterTomorrow.setDate(today.getDate() + 2);
+      return dayAfterTomorrow;
     }
+
+    // Detecção de referências como "próxima segunda" ou "segunda que vem"
+    const nextWeekPattern =
+      /(pr[óo]xim[ao]|que vem|seguinte|na outra|da outra)/i;
+    const isNextWeekReference = nextWeekPattern.test(lowerMessage);
 
     // Detecção de dias específicos da semana
     const weekdayMap: Record<string, number> = {
@@ -1235,8 +1759,12 @@ export function extractDate(message: string): Date | null {
         const currentDay = today.getDay();
         let daysToAdd = dayIndex - currentDay;
 
-        // Se o dia já passou nesta semana, ir para a próxima
-        if (daysToAdd <= 0) {
+        // Se for referência à "próxima semana" ou similar, adicionar 7 dias
+        if (isNextWeekReference) {
+          daysToAdd += 7;
+        }
+        // Se o dia já passou nesta semana ou é hoje, ir para a próxima semana
+        else if (daysToAdd <= 0) {
           daysToAdd += 7;
         }
 
@@ -1249,7 +1777,7 @@ export function extractDate(message: string): Date | null {
     // Nova regex melhorada que considera variações de separadores
     const dateRegexes = [
       // DD/MM/YYYY ou DD/MM/YY
-      /(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/g,
+      /(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/,
       // "dia" DD
       /dia\s+(\d{1,2})(?:\s+de\s+(\w+))?(?:\s+de\s+(\d{4}))?/i,
       // DD "de" Mês
@@ -1261,22 +1789,25 @@ export function extractDate(message: string): Date | null {
       if (match) {
         // Para o formato DD/MM/YYYY
         if (match[1] && match[2]) {
-          const day = match[1].padStart(2, "0");
-          const month = match[2].padStart(2, "0");
+          const day = parseInt(match[1]);
+          const month = parseInt(match[2]);
           const year = match[3]
             ? match[3].length === 2
-              ? `20${match[3]}`
-              : match[3]
-            : new Date().getFullYear().toString();
+              ? 2000 + parseInt(match[3])
+              : parseInt(match[3])
+            : today.getFullYear();
 
-          const dateStr = `${year}-${month}-${day}`;
-          const date = new Date(dateStr);
+          // Validar valores de dia e mês
+          if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+            const date = new Date(year, month - 1, day);
 
-          if (isValid(date)) {
-            return date;
+            // Verificar se é uma data válida (ex: 31 de fevereiro não existe)
+            if (date.getDate() === day && date.getMonth() === month - 1) {
+              return date;
+            }
           }
         }
-        // Para formatos com nome do mês, implementar em versões futuras
+        // Para formatos com nome do mês, implementação futura
       }
     }
 
@@ -1291,7 +1822,7 @@ export function extractDate(message: string): Date | null {
 }
 
 /**
- * Extrai hora de uma string com detecção melhorada
+ * Função estendida para extração de horário
  */
 export function extractTime(message: string): string | null {
   try {
@@ -1308,9 +1839,16 @@ export function extractTime(message: string): string | null {
       /(\d{1,2})h(\d{2})?/i,
       // HH horas e MM minutos
       /(\d{1,2})\s*horas(?:\s*e\s*(\d{1,2})\s*minutos)?/i,
+      // Meio-dia / meio dia
+      /meio[- ]?dia/i,
       // período aproximado (manhã, tarde, noite)
       /(manh[ãa]|tarde|noite)/i,
     ];
+
+    // Verificar regex para meio-dia
+    if (timePatterns[3].test(cleanMessage)) {
+      return "12:00";
+    }
 
     // Verificar regexes de horário específico
     for (const pattern of timePatterns.slice(0, 3)) {
@@ -1318,6 +1856,17 @@ export function extractTime(message: string): string | null {
       if (match) {
         let hour = parseInt(match[1]);
         let minute = match[2] ? parseInt(match[2]) : 0;
+
+        // Ajustar para formato 24h se necessário
+        if (
+          hour < 12 &&
+          (cleanMessage.includes("tarde") ||
+            cleanMessage.includes("noite") ||
+            cleanMessage.includes(" pm") ||
+            cleanMessage.includes(" p.m."))
+        ) {
+          hour += 12;
+        }
 
         // Validar hora e minuto
         if (hour >= 0 && hour <= 23 && minute >= 0 && minute < 60) {

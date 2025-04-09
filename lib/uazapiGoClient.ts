@@ -16,12 +16,22 @@ if (!UAZAPIGO_API_KEY) {
 }
 
 // Mapeamento de businessId para configuração de instância
-const clientInstanceMap: Record<string, { baseUrl: string; token: string }> = {
+export const clientInstanceMap: Record<
+  string,
+  { baseUrl: string; token: string }
+> = {
   business0: {
     baseUrl: "https://recepcionistai.uazapi.com",
     token: "dbdf648a-5320-4c4a-993d-275910a11286",
   },
   // Outras instâncias podem ser adicionadas aqui
+};
+
+export const businessIdMap = {
+  "dbdf648a-5320-4c4a-993d-275910a11286": {
+    businessId: "business0",
+    baseUrl: "https://recepcionistai.uazapi.com",
+  },
 };
 
 /**
@@ -131,6 +141,7 @@ export async function sendTextMessage(
       params.mentions = options.mentions;
     }
 
+    console.log(JSON.stringify({ params }, null, 2));
     // Enviar a mensagem
     const result = await uazapiClient.message.sendText(params);
 

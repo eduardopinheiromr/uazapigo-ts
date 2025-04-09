@@ -35,7 +35,7 @@ export async function processWebhookPayload(
     });
 
     // Formatar o payload para o formato interno da aplicação
-    const payload: UazapiGoPayload = {
+    let payload: UazapiGoPayload = {
       phone,
       text: text || "",
       messageType: getMessageType(messageType || message.type),
