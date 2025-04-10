@@ -22,55 +22,9 @@ import {
 } from "@/services/appointment";
 import { getBusinessHours, getBusinessInfo } from "@/services/business";
 import { requestHumanAgent } from "@/services/interaction";
-
-const modelName = "gemini-2.0-flash-lite";
-const supportedWebhooks = ["/messages/text"];
-
-// Implementação do Agente de Revisão
-async function reviewResponse(responseText, context) {
-  // Usar o modelo Gemini para revisar a resposta
-  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-  });
-
-  const reviewPrompt = `
-    Você é um agente de controle de qualidade para um assistente virtual de barbearia.
-    
-    Analise esta resposta que será enviada para um cliente via WhatsApp e verifique:
-    1. Se contém informações técnicas de erro que não deveriam ser expostas
-    2. Se é consistente com o contexto da conversa
-    3. Se fornece informações precisas e úteis ao cliente
-    4. Se há contradições com respostas anteriores
-    
-    Contexto da conversa: ${JSON.stringify(context.conversation_history)}
-    
-    Resposta a ser analisada: "${responseText}"
-    
-    Se a resposta for adequada, retorne apenas "APPROVED".
-    Se a resposta tiver problemas, retorne "REJECTED" seguido de uma explicação breve
-    e uma versão corrigida que deveria ser enviada.
-  `;
-
-  const result = await model.generateContent(reviewPrompt);
-  const reviewResult = result.response.text();
-
-  if (reviewResult.startsWith("APPROVED")) {
-    return { approved: true, finalResponse: responseText };
-  } else {
-    // Extrair a versão corrigida da resposta
-    const correctedResponse =
-      reviewResult.split("Versão corrigida:")[1]?.trim() ||
-      "Desculpe, estamos com um problema temporário. Por favor, tente novamente em alguns instantes ou entre em contato pelo telefone (22) 99977-5122.";
-
-    logger.warn("Response rejected by review agent", {
-      originalResponse: responseText,
-      reviewFeedback: reviewResult,
-    });
-
-    return { approved: false, finalResponse: correctedResponse };
-  }
-}
+import { modelName, supportedWebhooks } from "./_constants";
+import { injectPromptCurrentDate } from "./_utils";
+import { processLLMResponse } from "./_processLLMResponse";
 
 export default async function handler(
   req: NextApiRequest,
@@ -112,15 +66,34 @@ export default async function handler(
       content: payload.message.text,
       timestamp: Date.now(),
     });
-    // passo 2 - inserir o histórico no prompt base
 
-    basePrompt += `Hoje é dia ${new Date().toLocaleDateString("pt-BR")}, ${new Date().toLocaleTimeString("pt-BR")}  `;
-    basePrompt += `\n\n# Histórico de mensagens\n`;
-    basePrompt += `${JSON.stringify(session.conversation_history)}\n\n`;
-    basePrompt += `# Você deve responder a última mensagem, mantendo a fluidez da conversa\n`;
+    // passo 2 - inserir o histórico no prompt base
+    const currentPrompt =
+      basePrompt +
+      `
+      ## Formato de Resposta
+      Você DEVE responder no seguinte formato JSON:
+      {
+        "resposta": "O texto completo da resposta para o cliente",
+        "meta": {
+          "intencao_detectada": "agendamento | cancelamento | reagendamento | consulta_horarios | saudacao | outro",
+          "horarios_mencionados": ["14:00", "15:30"],
+          "horarios_agendados": ["14:00"],
+          "servicos_mencionados": ["Corte de Cabelo"],
+          "data_referencia": "2025-04-10",
+          "confianca": 0.95
+        }
+      }
+        
+      IMPORTANTE: O texto dentro do campo "resposta" será enviado diretamente ao cliente no WhatsApp. Os metadados serão usados apenas internamente. Mantenha o JSON válido.
+      ` +
+      injectPromptCurrentDate() +
+      `\n\n# Histórico de mensagens\n` +
+      `${JSON.stringify(session.conversation_history)}\n\n` +
+      `# Você deve responder a última mensagem, mantendo a fluidez da conversa\n`;
 
     // passo 3 - gerar a resposta
-    console.log(basePrompt);
+    console.log(currentPrompt);
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
     const model = genAI.getGenerativeModel({
       model: modelName,
@@ -145,16 +118,12 @@ export default async function handler(
       toolConfig: {
         functionCallingConfig,
       },
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: basePrompt,
-            },
-          ],
-        },
-      ],
+      systemInstruction: basePrompt,
+      contents: session.conversation_history.map((message) => ({
+        role: message.role,
+        parts: [{ text: message.content }],
+      })),
+
       generationConfig: {
         temperature: 0,
       },
@@ -165,10 +134,7 @@ export default async function handler(
       ],
     });
 
-    // Substitua esta linha:
-    // const responseText = result.response.text();
-
-    // Por este trecho de código para processar chamadas de ferramentas:
+    // Processamento de chamadas de ferramentas
     let finalResponseText = "";
     let currentResult = result;
     let toolExecutionCount = 0;
@@ -183,7 +149,62 @@ export default async function handler(
 
       if (!toolCalls || toolExecutionCount >= MAX_TOOL_EXECUTIONS) {
         // Se não houver chamadas de ferramentas ou atingimos o limite, use o texto da resposta
-        return currentResult.response.text();
+        const finalContent = currentResult.response.text();
+
+        // Verificar se a resposta está em formato JSON
+        // Se não estiver, adicionar instruções para formatar como JSON
+        if (
+          !finalContent.includes('"resposta":') &&
+          !finalContent.includes('"meta":')
+        ) {
+          // A resposta não está formatada como JSON, forçar reformatação
+          const formattingPrompt = `
+            Por favor, reformate a seguinte resposta para o formato JSON solicitado:
+            {
+              "resposta": "O texto da resposta para o cliente",
+              "meta": {
+                "intencao_detectada": "categoria_apropriada",
+                "horarios_mencionados": [],
+                "horarios_agendados": [],
+                "servicos_mencionados": [],
+                "data_referencia": "",
+                "confianca": 0.9
+              }
+            }
+            
+            Resposta a reformatar:
+            ${finalContent}
+            
+            Certifique-se de manter todo o conteúdo da resposta original no campo "resposta".
+          `;
+
+          try {
+            const reformatResult =
+              await model.generateContent(formattingPrompt);
+            return reformatResult.response.text();
+          } catch (error) {
+            logger.warn("Erro ao reformatar resposta como JSON", {
+              error: error instanceof Error ? error.message : String(error),
+              businessId,
+              userPhone,
+            });
+
+            // Fallback: criar JSON manualmente
+            return JSON.stringify({
+              resposta: finalContent,
+              meta: {
+                intencao_detectada: "desconhecida",
+                horarios_mencionados: [],
+                horarios_agendados: [],
+                servicos_mencionados: [],
+                data_referencia: "",
+                confianca: 0.5,
+              },
+            });
+          }
+        }
+
+        return finalContent;
       }
 
       // Incrementar contador para evitar loops infinitos
@@ -291,10 +312,22 @@ export default async function handler(
           businessId,
           userPhone,
         });
+
+        // Use mensagens amigáveis específicas para cada ferramenta
+        const userFriendlyMessages = {
+          cancelAppointment:
+            "Não foi possível cancelar seu agendamento neste momento. Você pode tentar novamente ou ligar para (22) 99977-5122.",
+          createAppointment:
+            "Não foi possível criar seu agendamento. Por favor, verifique os dados informados e tente novamente.",
+          default:
+            "Desculpe, não foi possível completar esta operação. Por favor, tente novamente.",
+        };
+
+        const errorMessage =
+          userFriendlyMessages[toolName] || userFriendlyMessages.default;
+
         toolResult = {
-          error: `Erro ao executar ${toolName}: ${
-            error instanceof Error ? error.message : "Erro desconhecido"
-          }`,
+          error: errorMessage,
         };
       }
 
@@ -303,7 +336,7 @@ export default async function handler(
         contents: [
           {
             role: "user",
-            parts: [{ text: basePrompt }],
+            parts: [{ text: currentPrompt }],
           },
           {
             role: "model",
@@ -314,7 +347,8 @@ export default async function handler(
             parts: [
               {
                 text: `Resultado da ferramenta ${toolName}: ${JSON.stringify(toolResult, null, 2)}. 
-        Por favor, continue a conversa incorporando essas informações.`,
+                Por favor, continue a conversa incorporando essas informações.
+                Lembre-se de responder no formato JSON solicitado com os campos "resposta" e "meta".`,
               },
             ],
           },
@@ -328,6 +362,7 @@ export default async function handler(
           },
         ],
       });
+
       // Atualizar a resposta atual para processamento adicional
       currentResult = newResult;
 
@@ -338,48 +373,47 @@ export default async function handler(
     // Iniciar o processamento de chamadas de ferramentas
     finalResponseText = await processToolCalls();
 
-    console.log(
-      JSON.stringify({
-        finalResponseText,
-      }),
+    console.log("Resposta bruta do LLM:", finalResponseText);
+
+    // Processar e validar a resposta JSON
+    const { text: processedResponseText, meta } = await processLLMResponse(
+      { response: { text: () => finalResponseText } },
+      businessId,
+      userPhone,
     );
+
+    console.log("Resposta processada:", processedResponseText);
+    console.log("Metadados:", meta);
+
     // Revisar a resposta antes de enviá-la
-    const reviewResult = await reviewResponse(finalResponseText, session);
-    finalResponseText = reviewResult.finalResponse;
+    // const reviewResult = await reviewResponse(
+    //   basePrompt,
+    //   processedResponseText,
+    //   session,
+    // );
+    // const validatedResponseText = reviewResult.finalResponse;
+
+    // console.log("Resposta final após revisão:", validatedResponseText);
 
     // Salvar no histórico e enviar
     session.conversation_history.push({
-      role: "bot",
-      content: finalResponseText,
+      role: "model",
+      content: processedResponseText, //validatedResponseText,
       timestamp: Date.now(),
+      _meta: meta, // Opcional: salvar metadados para análise
     });
 
     await saveSession(businessId, userPhone, session);
-    await sendTextMessage(businessId, userPhone, finalResponseText);
-    // Extrair resposta e chamadas de ferramenta
-    // const responseText = result.response.text();
+    await sendTextMessage(businessId, userPhone, processedResponseText); //validatedResponseText);
 
-    // console.log(
-    //   JSON.stringify(
-    //     { result, availableTools: getAvailableTools(isAdmin) },
-    //     null,
-    //     2,
-    //   ),
-    // );
-
-    // // passo 4 - validar com um agente a resposta gerada, se não estiver ok, gerar de novo
-
-    // // passo 5 - salvar a resposta no historico da conversa
-    // session.conversation_history.push({
-    //   role: "bot",
-    //   content: responseText,
-    //   timestamp: Date.now(),
-    // });
-
-    // await saveSession(businessId, userPhone, session);
-
-    // // passo 6 - enviar para o usuário
-    // await sendTextMessage(businessId, userPhone, responseText);
+    // Registrar métricas (opcional)
+    if (meta && meta.intencao_detectada) {
+      logger.info(`Intenção detectada: ${meta.intencao_detectada}`, {
+        businessId,
+        userPhone,
+        confianca: meta.confianca,
+      });
+    }
   } catch (error) {
     logger.error("Error in webhook handler", {
       error: error instanceof Error ? error.message : String(error),
@@ -394,21 +428,17 @@ export default async function handler(
 }
 
 var basePrompt = `
-Você é a recepcionista que atende via o WhatsApp oficial do MISTER SÉRGIO CABELEIREIRO, especializado em gerenciar agendamentos e fornecer informações sobre nossos serviços.
+Você é a recepcionista que atende via o WhatsApp oficial do Mister Sérgio Cabeleireiro, especializado em gerenciar agendamentos e fornecer informações sobre nossos serviços.
 
 ## Sua Personalidade
-- Amigável, profissional e eficiente
-- Paciente com clientes que ainda não conhecem nossos serviços
-- Direto e claro ao explicar os procedimentos de agendamento
-- Sempre mantém um tom cortês e acolhedor
-- Não repete cumprimentos se já houver um no histórico
+- Amigável, profissional, paciente, claro e eficiente
 
 ## Conhecimentos Principais
-- Todos os serviços oferecidos pelo MISTER SÉRGIO CABELEIREIRO:
-  * Barba: Aparar e modelar barba - Duração: 20 minutos - Preço: R$ 25,00
+- Todos os serviços oferecidos pelo Mister Sérgio Cabeleireiro:
+  * Barba: Aparar e modelar barba - Duração: 30 minutos - Preço: R$ 25,00
   * Corte + Barba: Combo corte e barba - Duração: 45 minutos - Preço: R$ 55,00
   * Corte de Cabelo: Corte masculino básico - Duração: 30 minutos - Preço: R$ 35,00
-  * Design de Sobrancelhas - Duração: 15 minutos - Preço: R$ 20,00
+  * Design de Sobrancelhas - Duração: 30 minutos - Preço: R$ 20,00
 
 - Horários de funcionamento:
   * Terça a Sexta: 09:30 às 19:00
@@ -430,29 +460,29 @@ Você é a recepcionista que atende via o WhatsApp oficial do MISTER SÉRGIO CAB
   * Preços justos com ótimo custo-benefício
   * Ideal para quem precisa de atendimento rápido no horário de almoço
 
-- Processo completo de agendamento, cancelamento e reagendamento
-- Políticas sobre atrasos e cancelamentos
-
 ## Como Responder
 - Seja breve e objetivo em suas respostas, mas sempre educado
 - Use linguagem simples e evite termos técnicos desnecessários
 - Dê sempre as opções disponíveis quando relevante (ex: horários, serviços)
 - Confirme informações importantes com o cliente antes de prosseguir
 - Use emojis ocasionalmente para uma comunicação mais amigável, mas com moderação, evitando repetição se no histórico já houver muitos emojis
-- Se no histórico você já cumprimentou o cliente, não repita o cumprimento
+- Se no histórico você já cumprimentou o cliente, não repita o cumprimento(exemplo, não diga mais de um "Olá, tudo bem?" e similares)
+- Se o cliente já fez uma pergunta, não pergunte novamente "Como posso ajudar?" ou "O que você gostaria de saber?". Em vez disso, responda diretamente à pergunta anterior.
+- Você jamais deve pedir pra ele aguardar um momento, para verificar alguma coisa, pois verificações ocorrem dentro do algoritmo, antes de responder ao cliente.
 
-## Fluxo de Agendamento
+## Fluxo de Agendamento(flexível, não rigidamente sequencial)
 1. Quando um cliente pedir para agendar, apresente claramente todos os serviços disponíveis com preços e duração
 2. Após a escolha do serviço, pergunte sobre o dia preferido
 3. Depois, ofereça os horários disponíveis para aquele dia
 4. Por fim, confirme todos os detalhes antes de finalizar o agendamento
 5. Mencione que os horários podem ser disputados, então o agendamento antecipado é recomendado
 
+OBS IMPORTANTE: Para evitar perguntas repetidas, não pergunte "Qual serviço você gostaria de agendar?" se o cliente já mencionou um serviço anteriormente, ou "Qual dia/horário você prefere?" se o cliente já informou um dia/horário. Nesses casos, deve verificar se está disponível e já responder com a confirmação/objeção.
+
 ## Limitações
 - Você não processa pagamentos
 - Você não pode alterar os preços ou criar novos serviços
 - Você não tem acesso a informações de clientes além do que eles compartilham durante a conversa
-- Você não pode acessar o histórico médico ou informações pessoais sensíveis
 
 ## Respostas Específicas
 - **Quando perguntar sobre cortes específicos**: Explique que nossos profissionais são especializados em diversos estilos e podem atender às necessidades específicas durante o atendimento. Nossos barbeiros são elogiados pela precisão e qualidade dos cortes.

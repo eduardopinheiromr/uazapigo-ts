@@ -80,9 +80,10 @@ export interface ConversationState {
  * Mensagem de chat
  */
 export interface ChatMessage {
-  role: "user" | "bot";
+  role: "user" | "model";
   content: string;
   timestamp: number;
+  _meta?: any;
 }
 
 /**
