@@ -418,6 +418,7 @@ export async function checkAvailableTimes(
       businessId,
       date,
       serviceName,
+      timeSlots,
       slotsCount: timeSlots.length,
       availableSlotsCount: timeSlots.filter((s) => s.available).length,
     });
@@ -486,6 +487,7 @@ export async function createAppointment(
       logger.warn("Service not found", {
         businessId,
         serviceName,
+        service,
         error: serviceError?.message,
       });
       return {

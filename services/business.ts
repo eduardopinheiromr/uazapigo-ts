@@ -119,6 +119,7 @@ export async function getBusinessInfo(businessId: string): Promise<{
     logger.debug("Business info retrieved", {
       businessId,
       hasRagInfo: !!additionalInfo,
+      businessInfo,
     });
 
     return businessInfo;
