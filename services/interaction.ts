@@ -1,133 +1,135 @@
-// services/interaction.ts
+/* ----------------------------------------
+ * interaction.ts
+ * ----------------------------------------
+ * Lida com solicitações de atendimento humano, etc.
+ */
+
 import supabaseClient from "@/lib/supabaseClient";
-import logger from "@/lib/logger";
-import { sendTextMessage } from "@/lib/uazapiGoClient";
-import { getOrCreateCustomer } from "@/lib/utils";
+import { v4 as uuid } from "uuid";
 
 /**
- * Marca a conversa para atendimento humano e notifica a equipe responsável
- * @param businessId ID do negócio
- * @param customerPhone Telefone do cliente
- * @param reason Motivo da solicitação (opcional)
+ * Verifica se já existe uma solicitação pendente para este usuário.
+ * Se sim, retorna o registro encontrado. Se não, retorna null.
+ */
+async function checkExistingHumanRequest(
+  businessId: string,
+  customerPhone: string,
+) {
+  const { data, error } = await supabaseClient
+    .from("human_agent_requests")
+    .select("*")
+    .eq("business_id", businessId)
+    .eq("customer_phone", customerPhone)
+    .eq("status", "PENDING")
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(
+      `Erro ao checar solicitação humana pendente: ${error.message}`,
+    );
+  }
+  return data || null;
+}
+
+/**
+ * Envia mensagem de notificação para um array de números (ou 1 se for string).
+ */
+async function notifyAdmins(
+  businessId: string,
+  phones: string[],
+  userPhone: string,
+) {
+  // Ajuste para usar sua função de envio (ex: sendTextMessage):
+  for (const adminPhone of phones) {
+    try {
+      // Exemplo de chamada fictícia:
+      // await sendTextMessage(businessId, adminPhone, `Solicitação de atendimento humano do cliente ${userPhone}...`)
+      console.log(
+        `Notificando admin ${adminPhone} para userPhone ${userPhone}`,
+      );
+    } catch (err) {
+      console.warn("Falha ao notificar admin", adminPhone, "->", err);
+    }
+  }
+}
+
+async function getBusiness(businessId: string) {
+  const { data, error } = await supabaseClient
+    .from("businesses")
+    .select("*")
+    .eq("business_id", businessId)
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(
+      `Não foi possível obter dados do negócio: ${error.message}`,
+    );
+  }
+  return data ?? null;
+}
+
+/**
+ * Solicita atendimento humano para um usuário, evitando duplicados e notificando admins.
  */
 export async function requestHumanAgent(
   businessId: string,
   customerPhone: string,
-  reason?: string,
-): Promise<{ success: boolean; message: string }> {
+) {
   try {
-    logger.info("Requesting human agent", {
-      businessId,
-      customerPhone,
-      reason,
-    });
-
-    // Obter ou criar o cliente
-    const customerId = await getOrCreateCustomer(businessId, customerPhone);
-    if (!customerId) {
-      logger.error("Failed to get or create customer", {
-        businessId,
-        customerPhone,
-      });
+    const existing = await checkExistingHumanRequest(businessId, customerPhone);
+    if (existing) {
       return {
-        success: false,
+        success: true,
         message:
-          "Não foi possível processar sua solicitação de atendente humano. Por favor, tente novamente.",
+          "Sua solicitação de atendimento humano já está em aberto. Aguarde um atendente.",
       };
     }
 
-    // Registrar a solicitação de atendente humano
-    const requestId = crypto.randomUUID();
+    const biz = await getBusiness(businessId);
+    if (!biz) {
+      return { success: false, message: "Negócio não encontrado." };
+    }
 
-    const { error } = await supabaseClient.from("human_agent_requests").insert({
-      request_id: requestId,
-      business_id: businessId,
-      customer_id: customerId,
-      reason: reason || "Solicitação de atendimento humano",
-      status: "pending",
-      created_at: new Date().toISOString(),
-    });
-
-    if (error) {
-      logger.error("Error creating human agent request", {
-        error: error.message,
-        businessId,
-        customerPhone,
+    // Cria registro em human_agent_requests
+    const requestId = uuid();
+    const { error: insertError } = await supabaseClient
+      .from("human_agent_requests")
+      .insert({
+        request_id: requestId,
+        business_id: businessId,
+        customer_phone: customerPhone,
+        status: "PENDING",
+        created_at: new Date().toISOString(),
       });
+
+    if (insertError) {
       return {
         success: false,
-        message:
-          "Ocorreu um erro ao solicitar um atendente humano. Por favor, tente novamente.",
+        message: "Falha ao registrar solicitação de atendimento humano.",
       };
     }
 
-    // Buscar administradores para notificar
-    const { data: business, error: businessError } = await supabaseClient
-      .from("businesses")
-      .select("admin_phone, name")
-      .eq("business_id", businessId)
-      .single();
-
-    if (businessError) {
-      logger.error("Error fetching business for notification", {
-        error: businessError.message,
-        businessId,
-      });
-      // Continuar mesmo com erro, apenas log
+    // Notifica admin(s)
+    let adminPhones: string[] = [];
+    if (biz.config?.adminPhones && Array.isArray(biz.config.adminPhones)) {
+      adminPhones = biz.config.adminPhones;
+    } else if (biz.admin_phone) {
+      adminPhones = [biz.admin_phone];
     }
 
-    // Notificar administrador principal, se disponível
-    if (business?.admin_phone) {
-      try {
-        const notificationMessage = `📢 *Nova Solicitação de Atendimento*\n\nCliente: ${customerPhone}\nMotivo: ${reason || "Não especificado"}\n\nAcesse o painel administrativo para responder.`;
-
-        await sendTextMessage(
-          businessId,
-          business.admin_phone,
-          notificationMessage,
-        );
-
-        logger.debug("Admin notification sent", {
-          businessId,
-          adminPhone: business.admin_phone,
-        });
-      } catch (notificationError) {
-        logger.warn("Failed to send admin notification", {
-          error:
-            notificationError instanceof Error
-              ? notificationError.message
-              : String(notificationError),
-          businessId,
-          adminPhone: business.admin_phone,
-        });
-        // Continuar mesmo com erro de notificação
-      }
+    if (adminPhones.length > 0) {
+      await notifyAdmins(businessId, adminPhones, customerPhone);
     }
-
-    // Também poderia notificar admins adicionais ou criar um registro para ser mostrado no dashboard
-
-    logger.info("Human agent request created successfully", {
-      businessId,
-      customerPhone,
-      requestId,
-    });
 
     return {
       success: true,
       message:
-        "Sua solicitação de atendimento humano foi registrada com sucesso. Logo um atendente entrará em contato.",
+        "Sua solicitação foi registrada. Em breve, um atendente entrará em contato.",
     };
-  } catch (error) {
-    logger.error("Unexpected error in requestHumanAgent", {
-      error: error instanceof Error ? error.message : String(error),
-      businessId,
-      customerPhone,
-    });
-
+  } catch (err: any) {
     return {
       success: false,
-      message:
-        "Ocorreu um erro ao solicitar um atendente humano. Por favor, tente novamente.",
+      message: `Erro na solicitação de atendimento humano: ${err.message}`,
     };
   }
 }

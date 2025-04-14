@@ -1,134 +1,116 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { injectPromptCurrentDate } from "./_utils";
-import logger from "@/lib/logger";
-import { modelName } from "./_constants";
-
-/**
- * Implementação do Agente de Revisão que verifica a qualidade da resposta
+/* ----------------------------------------
+ * _reviewResponse.ts
+ * ----------------------------------------
+ * Revisa a resposta gerada pelo LLM principal, usando outra chamada de IA
+ * para ver se deve aprovar ou corrigir. Exemplo com Gemini.
  */
-async function reviewResponse(basePrompt, responseText, context) {
-  // Usar o modelo Gemini para revisar a resposta
-  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-  });
 
-  //   4. Se há contradições com respostas anteriores
-  //   5. Se entende a verdadeira intenção do cliente e não apenas responde literalmente
-  //   6. Se antecipa as necessidades do cliente de forma natural
-  const reviewPrompt = `
-    Você é um agente de controle de qualidade para um assistente virtual de barbearia, cujo prompt base é esse:
-    Prompt base: ${basePrompt}
+import logger from "@/lib/logger";
+import { model } from "./_steps/_agentChain/_model";
 
-    ---
-    
-    Analise esta resposta que será enviada para um cliente via WhatsApp e verifique:
-    1. Se contém informações técnicas de erro que não deveriam ser expostas
-    2. Se é consistente com o contexto da conversa
-    3. Se fornece informações precisas e úteis ao cliente
+interface ReviewResult {
+  status: "APPROVED" | "REJECTED";
+  correctedText?: string;
+}
 
-    
-    Se a resposta for adequada, retorne apenas "APPROVED".
-    Se a resposta tiver problemas, retorne "REJECTED" seguido de uma explicação breve
-    e uma versão corrigida que deveria ser enviada, exemplo: "Resposta corrigida: a resposta atualizada com a correção proposta, adequada ao negócio e ao cliente".
-    Se precisar corrigir, não invente informações, apenas ajuste o que for necessário.
-    
-    ${injectPromptCurrentDate()}
+export async function reviewResponse(
+  conversationHistory: string, // Pode ser JSON ou resumo
+  generatedText: string,
+  fallbackSupportPhone: string = "",
+): Promise<ReviewResult> {
+  try {
+    // Exigimos que o revisor devolva algo no formato JSON: { "status":"APPROVED"|"REJECTED", "correctedText":"..." }
+    const reviewPrompt = `
+Você é um revisor de conteúdo de chatbot. Verifique se a resposta abaixo está coerente, educada e não viola nenhuma política.
+Se estiver boa, retorne exatamente:
+{
+  "status":"APPROVED"
+}
 
-    Resposta a ser analisada: "${responseText}"
-    
-    Contexto da conversa: ${JSON.stringify(context.conversation_history)}
-  `;
+Se identificar problemas, retorne:
+{
+  "status":"REJECTED",
+  "correctedText":"aqui vai a resposta corrigida, sem problemas"
+}
 
-  const result = await model.generateContent(reviewPrompt);
-  // const result = await model.generateContent({
-  //   systemInstruction: reviewPrompt,
-  //   contents: context.conversation_history.map((message) => ({
-  //     role: message.role,
-  //     parts: [{ text: message.content }],
-  //   })),
-  //   generationConfig: {
-  //     temperature: 0,
-  //   },
-  // });
-  const reviewResult = result.response.text();
+Nada além desse JSON. Eis o contexto da conversa (como string): 
+"""${conversationHistory}"""
 
-  if (reviewResult.startsWith("APPROVED")) {
-    return { approved: true, finalResponse: responseText };
-  } else {
-    // Extrair a versão corrigida da resposta - mais robusto para capturar diferentes formatos
-    let correctedResponse = null;
+Eis a resposta gerada que você deve revisar:
+"""${generatedText}"""
+    `.trim();
 
-    // Procurar por várias possíveis indicações de versão corrigida
-    const possibleIndicators = [
-      "Resposta corrigida:",
-      "Versão corrigida:",
-      "Versão Corrigida:",
-      "**Versão Corrigida:**",
-      "**Versão corrigida:**",
-      "VERSÃO CORRIGIDA:",
-      "Versão revisada:",
-      "Sugestão de correção:",
-    ];
+    const response = await model.generateContent({
+      systemInstruction: "Revisor de qualidade de respostas",
 
-    for (const indicator of possibleIndicators) {
-      if (reviewResult.includes(indicator)) {
-        correctedResponse = reviewResult.split(indicator)[1]?.trim();
-        break;
-      }
-    }
-
-    // Se não encontrou pelos separadores, procurar por texto entre aspas depois de "corrigida"
-    if (
-      !correctedResponse &&
-      reviewResult.toLowerCase().includes("corrigida")
-    ) {
-      const matches = reviewResult.match(/"([^"]+)"/);
-      if (matches && matches[1]) {
-        correctedResponse = matches[1];
-      }
-    }
-
-    // Se ainda não encontrou e tem aspas na resposta, usar o texto entre aspas
-    if (!correctedResponse) {
-      const matches = reviewResult.match(/"([^"]+)"/);
-      if (matches && matches[1]) {
-        correctedResponse = matches[1];
-      }
-    }
-
-    // Remover aspas iniciais e finais se estiverem presentes
-    if (
-      correctedResponse &&
-      correctedResponse.startsWith('"') &&
-      correctedResponse.endsWith('"')
-    ) {
-      correctedResponse = correctedResponse.slice(1, -1);
-    }
-
-    // Se ainda não conseguiu extrair, usar a segunda metade da resposta
-    if (!correctedResponse && reviewResult.length > 100) {
-      const halfwayPoint = Math.floor(reviewResult.length / 2);
-      const secondHalf = reviewResult.slice(halfwayPoint);
-
-      // Verificar se há algum texto significativo
-      if (secondHalf.length > 20) {
-        correctedResponse = secondHalf.trim();
-      }
-    }
-
-    // Fallback para mensagem genérica apenas se não conseguiu extrair nada útil
-    if (!correctedResponse || correctedResponse.length < 20) {
-      correctedResponse =
-        "Desculpe, estamos com um problema temporário. Por favor, tente novamente em alguns instantes ou entre em contato pelo telefone (22) 99977-5122.";
-    }
-
-    logger.warn("Response rejected by review agent", {
-      originalResponse: responseText,
-      reviewFeedback: reviewResult,
-      extractedCorrection: correctedResponse,
+      generationConfig: {
+        temperature: 0,
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: reviewPrompt,
+            },
+          ],
+        },
+      ],
     });
 
-    return { approved: false, finalResponse: correctedResponse };
+    const text = response?.[0]?.content?.parts?.[0] || "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) {
+      // se não conseguiu extrair JSON, tratar como falha de parsing => fallback
+      logger.warn("ReviewResponse: Modelo não retornou JSON esperado:", text);
+      return {
+        status: "REJECTED",
+        correctedText: fallbackMessage(fallbackSupportPhone),
+      };
+    }
+
+    const jsonStr = match[0];
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (jsonErr) {
+      logger.warn("ReviewResponse: Falha ao parsear JSON:", {
+        jsonStr,
+        jsonErr,
+      });
+      return {
+        status: "REJECTED",
+        correctedText: fallbackMessage(fallbackSupportPhone),
+      };
+    }
+
+    if (parsed.status === "APPROVED") {
+      return { status: "APPROVED" };
+    } else if (
+      parsed.status === "REJECTED" &&
+      typeof parsed.correctedText === "string"
+    ) {
+      return { status: "REJECTED", correctedText: parsed.correctedText };
+    } else {
+      // Formato inesperado
+      logger.warn("ReviewResponse: Formato inesperado do revisor:", parsed);
+      return {
+        status: "REJECTED",
+        correctedText: fallbackMessage(fallbackSupportPhone),
+      };
+    }
+  } catch (err: any) {
+    logger.error("ReviewResponse: Erro geral no revisor:", err);
+    return {
+      status: "REJECTED",
+      correctedText: fallbackMessage(fallbackSupportPhone),
+    };
   }
+}
+
+function fallbackMessage(phone: string) {
+  const extra = phone
+    ? ` Se precisar, ligue ou envie mensagem para ${phone}.`
+    : "";
+  return `Desculpe, não consegui validar a resposta no momento.${extra}`;
 }

@@ -8,7 +8,7 @@ import {
 } from "@google/generative-ai";
 import { availableTools } from "@/tools/definition";
 import { basePrompt } from "./_basePrompt";
-import { _model } from "./_model";
+import { model } from "./_model";
 import logger from "@/lib/logger";
 
 const _getAvailableTools = (isAdmin: boolean): FunctionDeclaration[] => {
@@ -32,8 +32,6 @@ export const _llmGeneration = async (input: NodeInput): Promise<NodeOutput> => {
     allowedFunctionNames: tools.map((tool) => tool.name),
   };
 
-  const model = _model();
-
   try {
     const result = await model.generateContent({
       toolConfig: {
@@ -44,10 +42,6 @@ export const _llmGeneration = async (input: NodeInput): Promise<NodeOutput> => {
         role: message.role,
         parts: [{ text: message.content }],
       })),
-
-      generationConfig: {
-        temperature: 0,
-      },
       tools: [
         {
           functionDeclarations: tools,

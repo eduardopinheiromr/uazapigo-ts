@@ -1,134 +1,98 @@
-// services/business.ts
+/* ----------------------------------------
+ * business.ts
+ * ----------------------------------------
+ * Fornece funções para obter informações do negócio (horários, info, RAG).
+ */
+
+import { BusinessConfig } from "@/types";
 import supabaseClient from "@/lib/supabaseClient";
-import logger from "@/lib/logger";
-import { getRagContext } from "@/lib/rag";
-import { BusinessHours } from "@/types";
+// ^ Exemplo: se quisermos centralizar o horário padrão no constants.ts
+//   ou use um objeto local, p. ex.: { monToFri: [9, 18], sat: [9,13], ... }
+
+interface RagService {
+  // Ajuste conforme seu conector RAG
+  getRagContext: (query: string) => Promise<string | null>;
+}
+
+async function getBusinessRecord(businessId: string): Promise<any | null> {
+  const { data, error } = await supabaseClient
+    .from("businesses")
+    .select("*")
+    .eq("business_id", businessId)
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(`Erro ao buscar dados do negócio: ${error.message}`);
+  }
+  return data ?? null;
+}
 
 /**
- * Obtém os horários de funcionamento do estabelecimento
- * @param businessId ID do negócio
+ * Retorna objeto de horário de funcionamento ou defaults, se não configurado.
  */
-export async function getBusinessHours(
-  businessId: string,
-): Promise<BusinessHours> {
+export async function getBusinessHours(businessId: string) {
   try {
-    logger.info("Getting business hours", { businessId });
+    const business = await getBusinessRecord(businessId);
+    const config: BusinessConfig | undefined = business?.config;
 
-    const { data, error } = await supabaseClient
-      .from("businesses")
-      .select("config")
-      .eq("business_id", businessId)
-      .single();
-
-    if (error) {
-      logger.error("Error fetching business hours", {
-        error: error.message,
-        businessId,
-      });
-      throw new Error(`Failed to fetch business hours: ${error.message}`);
+    if (config?.businessHours) {
+      return { success: true, hours: config.businessHours };
     }
 
-    const defaultHours: BusinessHours = {
-      monday: { start: "09:00", end: "18:00" },
-      tuesday: { start: "09:00", end: "18:00" },
-      wednesday: { start: "09:00", end: "18:00" },
-      thursday: { start: "09:00", end: "18:00" },
-      friday: { start: "09:00", end: "18:00" },
-      saturday: { start: "09:00", end: "13:00" },
-      sunday: { start: null, end: null },
+    throw new Error("Horários de funcionamento não configurados.");
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Erro ao obter horários do negócio: ${err.message}`,
     };
-
-    const businessHours = data?.config?.businessHours || defaultHours;
-
-    logger.debug("Business hours retrieved", { businessId });
-
-    return businessHours;
-  } catch (error) {
-    logger.error("Unexpected error in getBusinessHours", {
-      error: error instanceof Error ? error.message : String(error),
-      businessId,
-    });
-
-    throw error;
   }
 }
 
 /**
- * Obtém informações gerais sobre o estabelecimento
- * @param businessId ID do negócio
+ * Retorna informações gerais do negócio.
+ * Se 'ragEnabled' for true, busca contexto extra via RAG.
  */
-export async function getBusinessInfo(businessId: string): Promise<{
-  name: string;
-  address?: string;
-  phone?: string;
-  description?: string;
-  paymentMethods?: string[];
-  additionalInfo?: string;
-}> {
+export async function getBusinessInfo(
+  businessId: string,
+  ragService?: RagService,
+) {
   try {
-    logger.info("Getting business info", { businessId });
-
-    // Buscar informações básicas do negócio
-    const { data, error } = await supabaseClient
-      .from("businesses")
-      .select("name, config")
-      .eq("business_id", businessId)
-      .single();
-
-    if (error) {
-      logger.error("Error fetching business info", {
-        error: error.message,
-        businessId,
-      });
-      throw new Error(`Failed to fetch business info: ${error.message}`);
+    const business = await getBusinessRecord(businessId);
+    if (!business) {
+      return { success: false, message: "Negócio não encontrado." };
     }
 
-    // Tentar buscar informações adicionais na base de conhecimento usando RAG
-    let additionalInfo = "";
+    let infoText = `Nome: ${business.name}\nEndereço: ${business.address || "Não cadastrado"}\n`;
 
-    // Verificar se o RAG está ativado
-    const ragEnabled = data?.config?.ragEnabled !== false;
-
-    if (ragEnabled) {
+    // Caso queira buscar info extra por RAG
+    const ragEnabled = business.config?.ragEnabled ?? false;
+    if (ragEnabled && ragService) {
       try {
-        // Buscar informações sobre o negócio na base de conhecimento
-        const ragQuery =
-          "Quais são as informações gerais sobre o estabelecimento? Endereço, formas de pagamento, descrição, telefone de contato e outras informações relevantes.";
-
-        additionalInfo = await getRagContext(ragQuery, businessId);
-      } catch (ragError) {
-        logger.warn("Error fetching RAG context for business info", {
-          error:
-            ragError instanceof Error ? ragError.message : String(ragError),
-          businessId,
-        });
-        // Continuar mesmo se RAG falhar
+        const ragResult = await ragService.getRagContext(
+          `informações sobre ${business.name}`,
+        );
+        if (ragResult) {
+          infoText += `\nInformações adicionais:\n${ragResult}`;
+        }
+      } catch (ragErr) {
+        // Falha na RAG não é bloqueante
+        console.warn("Falha ao buscar RAG info:", ragErr);
       }
     }
 
-    // Construir a resposta combinando informações básicas e RAG
-    const businessInfo = {
-      name: data.name,
-      address: data?.config?.address,
-      phone: data?.config?.phone,
-      description: data?.config?.description,
-      paymentMethods: data?.config?.paymentMethods,
-      additionalInfo: additionalInfo || undefined,
+    return {
+      success: true,
+      data: {
+        businessId: business.business_id,
+        name: business.name,
+        address: business.address,
+        extraInfo: infoText,
+      },
     };
-
-    logger.debug("Business info retrieved", {
-      businessId,
-      hasRagInfo: !!additionalInfo,
-      businessInfo,
-    });
-
-    return businessInfo;
-  } catch (error) {
-    logger.error("Unexpected error in getBusinessInfo", {
-      error: error instanceof Error ? error.message : String(error),
-      businessId,
-    });
-
-    throw error;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Erro ao obter informações do negócio: ${err.message}`,
+    };
   }
 }

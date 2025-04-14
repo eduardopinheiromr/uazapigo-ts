@@ -32,8 +32,7 @@ export const _responseFormatting = async (
   try {
     // Processar e validar a resposta JSON
     const { text: processedResponseText, meta } = await processLLMResponse(
-      { response: { text: () => finalResponse } },
-      businessId,
+      finalResponse,
       userPhone,
     );
 

@@ -16,6 +16,7 @@ import {
 import { getBusinessHours, getBusinessInfo } from "@/services/business";
 import { requestHumanAgent } from "@/services/interaction";
 import { format, addDays } from "date-fns";
+import { serializeLlmResponse } from "../../_utils";
 
 /**
  * Executa uma ferramenta específica com os parâmetros fornecidos
@@ -105,8 +106,8 @@ const _executeTool = async (
         // );
         result = await checkAvailableTimes(
           businessId,
-          toolArgs.serviceName,
           toolArgs.date,
+          toolArgs.serviceName,
         );
         // Log detalhado do resultado
         logger.info(`Resultado de checkAvailableTimes:`, {
@@ -247,7 +248,7 @@ const _executeTool = async (
         result = await requestHumanAgent(
           businessId,
           userPhone,
-          toolArgs.reason,
+          // toolArgs.reason,
         );
         // Log detalhado do resultado
         logger.info(`Resultado de requestHumanAgent:`, {
@@ -752,6 +753,8 @@ export const _toolExecution = async (input: NodeInput): Promise<NodeOutput> => {
             confianca: 0.5,
           },
         });
+
+        finalResponseText = serializeLlmResponse(finalResponseText);
       }
     }
 

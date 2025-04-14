@@ -1,41 +1,79 @@
+/* ----------------------------------------
+ * _processLLMResponse.ts
+ * ----------------------------------------
+ * Recebe texto cru do LLM e extrai { resposta, meta } do JSON.
+ * Se falhar, retorna um fallback textual para o usuário.
+ */
+
 import logger from "@/lib/logger";
 
-/**
- * Processa e valida a resposta JSON do LLM
- */
-export async function processLLMResponse(result, businessId, userPhone) {
+export async function processLLMResponse(
+  rawText: string,
+  fallbackPhone: string = "",
+): Promise<{ text: string; meta: any }> {
   try {
-    // Extrair o JSON da resposta
-    const rawText = result.response.text();
-
-    // Buscar o objeto JSON na resposta
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      logger.warn("Formato JSON não encontrado na resposta", {
-        businessId,
-        userPhone,
-      });
-      return { text: rawText, meta: null };
+    if (!rawText) {
+      return {
+        text: fallbackMessage(fallbackPhone),
+        meta: null,
+      };
     }
 
-    const parsedResponse = JSON.parse(jsonMatch[0]);
-    const responseText = parsedResponse.resposta;
-    const meta = parsedResponse.meta;
+    // Tentar extrair um JSON do texto
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (!match) {
+      logger.warn("processLLMResponse: Nenhum JSON encontrado na resposta:", {
+        rawText,
+      });
+      return {
+        text: fallbackMessage(fallbackPhone),
+        meta: null,
+      };
+    }
 
-    return { text: responseText, meta };
-  } catch (error) {
-    logger.error("Erro ao processar resposta JSON", {
-      error: error instanceof Error ? error.message : String(error),
-      businessId,
-      userPhone,
-      rawResponse: result.response.text(),
-    });
+    const jsonStr = match[0];
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (err) {
+      logger.warn("processLLMResponse: Falha ao fazer JSON.parse:", {
+        err,
+        jsonStr,
+      });
+      return {
+        text: fallbackMessage(fallbackPhone),
+        meta: null,
+      };
+    }
 
-    // Fallback para texto original sem metadados
+    // Esperamos que parsed contenha { resposta, meta }
+    if (typeof parsed.resposta !== "string") {
+      logger.warn(
+        'processLLMResponse: Campo "resposta" inválido ou ausente:',
+        parsed,
+      );
+      return {
+        text: fallbackMessage(fallbackPhone),
+        meta: null,
+      };
+    }
+    const meta = parsed.meta ?? null;
+
     return {
-      text: "Desculpe, estou com dificuldades técnicas no momento. Por favor, tente novamente ou entre em contato pelo telefone (22) 99977-5122.",
+      text: parsed.resposta,
+      meta,
+    };
+  } catch (err: any) {
+    logger.error("processLLMResponse: Erro inesperado:", err);
+    return {
+      text: fallbackMessage(fallbackPhone),
       meta: null,
     };
   }
+}
+
+function fallbackMessage(phone: string) {
+  return phone
+    ? `Desculpe, ocorreu um erro ao interpretar a resposta. Se precisar, ligue ou envie mensagem para ${phone}.`
+    : `Desculpe, ocorreu um erro ao interpretar a resposta.`;
 }

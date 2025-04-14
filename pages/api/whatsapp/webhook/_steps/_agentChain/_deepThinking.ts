@@ -1,7 +1,7 @@
 // pages/api/whatsapp/webhook/_steps/_agentChain/_deepThinking.ts
 
 import { NodeInput, NodeOutput } from "./_types";
-import { _model } from "./_model";
+import { _model, model } from "./_model";
 import logger from "@/lib/logger";
 
 export const _deepThinking = async (input: NodeInput): Promise<NodeOutput> => {
@@ -45,16 +45,11 @@ export const _deepThinking = async (input: NodeInput): Promise<NodeOutput> => {
     - Parâmetros para cada ferramenta: [detalhe os parâmetros para cada ferramenta]
   `;
 
-  const model = _model();
-
   try {
     logger.debug("Iniciando deep thinking", { businessId, userPhone });
 
     const thinkingResult = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: thinkingPrompt }] }],
-      generationConfig: {
-        temperature: 0, // Queremos uma análise determinística e lógica
-      },
     });
 
     const analysis = thinkingResult.response.text();
